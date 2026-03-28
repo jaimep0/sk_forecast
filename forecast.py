@@ -6,26 +6,84 @@ import plotly.graph_objects as go
 
 # Set up the Streamlit data source
 def upload():
-    uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
+    st.markdown("""
+<style>
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        max-width: 1100px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-    if uploaded_file is not None:
-        # Preprocess the data for Prophet
+    st.set_page_config(page_title="Forecast Dashboard", layout="wide")
+
+    st.title("Sales Forecast Dashboard")
+    st.caption("Load your sales data and get forecasts for the next 15 periods.")
+
+    with st.container():
+        st.markdown("### Load Your Sales Data")
+        st.write(
+            "The CSV file should have a date column in the format DD/MM/YYYY, "
+            "and numerical columns for each item you want to forecast."
+        )
+
+        uploaded_file = st.file_uploader(
+            " ",
+            type=["csv"],
+            help="Example of valid date format: 18/01/2020"
+        )
+
+    if uploaded_file is None:
+        st.info("Load a CSV file to begin forecasting.")
+        return None, None
+
+    try:
         ventas = pd.read_csv(uploaded_file)
-        ventas['Semana'] = pd.to_datetime(ventas['Semana'], format='%d/%m/%Y')
-        last_date = ventas['Semana'].iloc[-5]
+        date_col = ventas.columns[0]
+        ventas[date_col] = pd.to_datetime(
+            ventas[date_col],
+            format="%d/%m/%Y",
+            errors="coerce"
+        )
 
-        st.write("File loaded successfully")
-        st.dataframe(ventas.head())
+        ventas = ventas.dropna(subset=[date_col]).sort_values(date_col).reset_index(drop=True)
+
+        if ventas.empty:
+            st.error("File doesn't contains valid dates in colum {date_col}.")
+            return None, None
+
+        if len(ventas) < 5:
+            st.error("File must contain at least 5 rows of data.")
+            return None, None
+
+        last_date = ventas[date_col].iloc[-5]
+
+        st.success("File loaded properly.")
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Filas", len(ventas))
+        col2.metric("Columnas", len(ventas.columns))
+        col3.metric("Última fecha válida", ventas[date_col].max().strftime("%d/%m/%Y"))
+
+        with st.expander("Data Preview", expanded=True):
+            st.dataframe(ventas.head(10), use_container_width=True)
 
         return ventas, last_date
-    else:
-        st.write("Please upload a CSV file to proceed.")
-        return None, None   
+
+    except KeyError:
+        st.error("Date column not found.")
+        return None, None
+
+    except Exception as e:
+        st.error(f"An error happend while loading the file: {e}")
+        return None, None
     
 
 def item_prophet(df, column):
     # Prophet requires columns 'ds' (date) and 'y' (target)
-    df_p = df[['Semana', column]].rename(columns={'Semana': 'ds', column: 'y'})
+    date_col = df.columns[0]
+    df_p = df[[date_col, column]].rename(columns={date_col: 'ds', column: 'y'})
     
     # Initialize and fit the Prophet model
     m = Prophet(yearly_seasonality=True, weekly_seasonality=True)
@@ -33,10 +91,6 @@ def item_prophet(df, column):
 
     future = m.make_future_dataframe(periods=15, freq='W')
     forecast = m.predict(future)
-    
-    # Visualize the forecast trend and seasonal patterns
-    #if performance:
-    #    fig1 = m.plot(forecast)
 
     # Unimos el df original (df) con el resultado de prophet (forecast)
     df_final = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].merge(
@@ -103,9 +157,10 @@ def pro_plot(df_final, last_date, name):
     st.plotly_chart(fig, use_container_width=True)
 
     df = df_final[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].copy()
-    df.set_index('ds', inplace=True)
-    df.columns = ['Pronostico', 'Minimo', 'Máximo']
-    st.write('Pronóstico')
+    df.columns = ['Date', 'Forecast', 'Minimum', 'Maximum']
+    df.set_index('Date', inplace=True)
+    df = df[4:]
+    st.write('Forecasted values for the next 15 periods')
     st.dataframe(round(df))
 
 def item_forecast():
