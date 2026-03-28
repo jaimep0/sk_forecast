@@ -6,6 +6,8 @@ import plotly.graph_objects as go
 
 # Set up the Streamlit data source
 def upload():
+    """Handles file upload and data preprocessing for the sales forecast dashboard."""
+
     st.markdown("""
 <style>
     .block-container {
@@ -81,6 +83,8 @@ def upload():
     
 
 def item_prophet(df, column):
+    """Prepares the data and fits a Prophet model for a specific item column."""
+
     # Prophet requires columns 'ds' (date) and 'y' (target)
     date_col = df.columns[0]
     df_p = df[[date_col, column]].rename(columns={date_col: 'ds', column: 'y'})
@@ -104,6 +108,8 @@ def item_prophet(df, column):
 
 
 def pro_plot(df_final, last_date, name):
+    """Generates a Plotly graph for the forecasted data,
+    including real values and confidence intervals."""
     df_final = df_final[df_final['ds'] > last_date].copy()
 
     fig = go.Figure()
@@ -163,7 +169,10 @@ def pro_plot(df_final, last_date, name):
     st.write('Forecasted values for the next 15 periods')
     st.dataframe(round(df))
 
-def item_forecast():
+def data_forecast():
+    """Main function to execute the forecasting process 
+    for each item column in the uploaded data."""
+
     df, last_date = upload()
     try:
         for column in df.columns[1:]:

@@ -3,4 +3,4 @@ import streamlit as st
 
 from forecast import *
 
-item_forecast()
+data_forecast()
