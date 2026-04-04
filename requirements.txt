@@ -4,3 +4,5 @@ prophet
 plotly
 matplotlib
 numpy
+SQLAlchemy>=2.0
+pandas>=2.0
