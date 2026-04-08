@@ -41,6 +41,37 @@ from services.acquisition_expense_service import (
 
 from services.roas_service import get_last_6_weeks_roas
 
+COLUMN_LABELS = {
+    "date": "Date",
+    "forecast": "Forecast",
+    "min": "Min",
+    "max": "Max",
+    "sales_total": "Sales",
+    "units_total": "Units",
+    "expenses_total": "Expenses",
+    "acquisition_expense_total": "Acquisition Expense",
+    "roas": "ROAS",
+    "sales_forecast": "Sales Forecast",
+    "sales_min": "Sales Min",
+    "sales_max": "Sales Max",
+    "expenses": "Expenses",
+    "net_income": "Net Income",
+    "net_income_min": "Net Income Min",
+    "net_income_max": "Net Income Max",
+    "balance": "Balance",
+    "balance_min": "Balance Min",
+    "balance_max": "Balance Max",
+    "projected_sales": "Sales Forecast",
+    "projected_sales_min": "Sales Min",
+    "projected_sales_max": "Sales Max",
+    "projected_expenses": "Expenses",
+    "projected_net_income": "Net Income",
+    "projected_net_income_min": "Net Income Min",
+    "projected_net_income_max": "Net Income Max",
+    "projected_bank_balance": "Balance",
+    "projected_bank_balance_min": "Balance Min",
+    "projected_bank_balance_max": "Balance Max",
+}
 
 st.set_page_config(page_title="Forecast Dashboard", layout="wide")
 
@@ -105,11 +136,75 @@ def render_forecast_chart(
     st.line_chart(chart_df, use_container_width=True)
 
 
-def render_cashflow_debug_table(cashflow_projection: pd.DataFrame):
-    st.markdown("### Cash Flow Detailed Debug Table")
+import plotly.graph_objects as go
 
+
+def render_forecast_band_chart(
+    df: pd.DataFrame,
+    x_col: str = "date",
+    y_col: str = "forecast",
+    min_col: str = "min",
+    max_col: str = "max",
+    title: str = "",
+):
+    if df.empty:
+        st.warning("No chart data available.")
+        return
+
+    chart_df = df.copy()
+    chart_df[x_col] = pd.to_datetime(chart_df[x_col])
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=chart_df[x_col],
+            y=chart_df[max_col],
+            mode="lines",
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo="skip",
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=chart_df[x_col],
+            y=chart_df[min_col],
+            mode="lines",
+            line=dict(width=0),
+            fill="tonexty",
+            fillcolor="rgba(100, 149, 237, 0.18)",
+            name="Range",
+            hoverinfo="skip",
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=chart_df[x_col],
+            y=chart_df[y_col],
+            mode="lines",
+            name="Forecast",
+            line=dict(width=3),
+        )
+    )
+
+    fig.update_layout(
+        title=title,
+        template="plotly_dark",
+        height=420,
+        margin=dict(l=20, r=20, t=50, b=20),
+        xaxis_title="",
+        yaxis_title="",
+        legend_title="",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_cashflow_debug_table(cashflow_projection: pd.DataFrame):
     if cashflow_projection.empty:
-        st.warning("No detailed cash flow projection available.")
         return
 
     debug_df = cashflow_projection.rename(
@@ -142,7 +237,8 @@ def render_cashflow_debug_table(cashflow_projection: pd.DataFrame):
         ]
     ].copy()
 
-    st.dataframe(debug_df, use_container_width=True)
+    with st.expander("Show detailed cash flow debug table"):
+        render_pretty_table(debug_df)
 
 
 def render_ml_update_section(section_key: str):
@@ -280,15 +376,12 @@ def render_sales_forecast():
                         "yhat_upper": "max",
                     }
                 )[["date", "forecast", "min", "max"]]
-                st.dataframe(sales_display, use_container_width=True)
+                render_pretty_table(sales_display[["date", "forecast", "min", "max"]])
 
                 st.markdown("### Sales Forecast Chart")
-                render_forecast_chart(
-                    df=sales_display,
-                    x_col="date",
-                    y_col="forecast",
-                    min_col="min",
-                    max_col="max",
+                render_forecast_band_chart(
+                    sales_display,
+                    title="Sales Forecast",
                 )
 
             st.markdown("### Units Forecast Table")
@@ -303,15 +396,12 @@ def render_sales_forecast():
                         "yhat_upper": "max",
                     }
                 )[["date", "forecast", "min", "max"]]
-                st.dataframe(units_display, use_container_width=True)
+                render_pretty_table(units_display[["date", "forecast", "min", "max"]])
 
                 st.markdown("### Units Forecast Chart")
-                render_forecast_chart(
-                    df=units_display,
-                    x_col="date",
-                    y_col="forecast",
-                    min_col="min",
-                    max_col="max",
+                render_forecast_band_chart(
+                    units_display,
+                    title="Units Forecast",
                 )
 
         except Exception as e:
@@ -357,17 +447,14 @@ def render_cashflow():
                 )[["date", "forecast", "min", "max"]]
 
                 st.markdown("### Cash Flow Projection Table")
-                st.dataframe(cashflow_display, use_container_width=True)
+                render_pretty_table(cashflow_display[["date", "forecast", "min", "max"]])
 
                 render_cashflow_debug_table(cashflow_projection)
 
                 st.markdown("### Cash Flow Projection Chart")
-                render_forecast_chart(
-                    df=cashflow_display,
-                    x_col="date",
-                    y_col="forecast",
-                    min_col="min",
-                    max_col="max",
+                render_forecast_band_chart(
+                    cashflow_display,
+                    title="Cash Flow Projection",
                 )
 
         except Exception as e:
@@ -442,9 +529,9 @@ def render_roas():
         roas_display = roas_df.copy()
         roas_display["date"] = pd.to_datetime(roas_display["date"])
 
-        st.dataframe(
+        render_pretty_table(
             roas_display[["date", "sales_total", "acquisition_expense_total", "roas"]],
-            use_container_width=True,
+            percent_cols=["roas"],
         )
 
         chart_df = roas_display[["date", "roas"]].copy().set_index("date")
@@ -545,19 +632,24 @@ def render_home():
             padding-bottom: 2rem;
             max-width: 1200px;
         }
+        div.stButton > button {
+            width: 100%;
+            border-radius: 10px;
+            height: 48px;
+            font-weight: 600;
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
     st.title("Forecast Dashboard")
-    st.caption("Update database tables and run forecasts.")
+    st.caption("Update your operational data and monitor forecasts, cash flow, and ROAS.")
 
     if "selected_option" not in st.session_state:
         st.session_state.selected_option = None
 
-    col2, col3, col5 = st.columns(3)
-    col1, col4 = st.columns(2)
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         if st.button("Update Data"):
@@ -572,13 +664,14 @@ def render_home():
             st.session_state.selected_option = "cash_flow"
 
     with col4:
-        if st.button("Home"):
-            st.session_state.selected_option = None
-        
-    with col5:
         if st.button("ROAS"):
             st.session_state.selected_option = "roas"
 
+    st.markdown("---")
+
+    if st.session_state.selected_option is None:
+        st.info("Choose a module to continue.")
+        
 
 def route_page():
     option = st.session_state.get("selected_option")
@@ -633,6 +726,36 @@ def route_page():
 
     else:
         st.info("Choose an option to continue.")
+
+
+def render_pretty_table(
+    df: pd.DataFrame,
+    date_col: str = "date",
+    percent_cols: list[str] | None = None,
+    decimals: int = 2,
+):
+    if df.empty:
+        st.warning("No data available.")
+        return
+
+    percent_cols = percent_cols or []
+    out = df.copy()
+
+    if date_col in out.columns:
+        out[date_col] = pd.to_datetime(out[date_col]).dt.strftime("%Y-%m-%d")
+        out = out.set_index(date_col)
+
+    out = out.rename(columns=COLUMN_LABELS)
+
+    format_dict = {}
+    for col in out.columns:
+        if pd.api.types.is_numeric_dtype(out[col]):
+            if col in [COLUMN_LABELS.get(c, c) for c in percent_cols]:
+                format_dict[col] = "{:.4f}"
+            else:
+                format_dict[col] = f"{{:,.{decimals}f}}"
+
+    st.dataframe(out.style.format(format_dict), use_container_width=True)
 
 
 def main():
