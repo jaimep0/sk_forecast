@@ -6,3 +6,6 @@ matplotlib
 numpy
 SQLAlchemy>=2.0
 pandas>=2.0
+requests
+python-dotenv
+psycopg2-binary

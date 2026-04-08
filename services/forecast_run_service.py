@@ -5,6 +5,8 @@ from services.forecast_prepare_service import (
     get_units_series_for_forecast,
     get_cashflow_history,
 )
+from services.expenses_service import get_expenses_daily_totals
+from services.banks_service import get_banks_daily_totals
 
 try:
     from prophet import Prophet
@@ -20,17 +22,6 @@ def forecast_series(
     freq: str = "D",
     growth: str = "linear",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Forecast a time series using Prophet.
-
-    Expected input columns:
-    - ds
-    - y
-
-    Returns:
-    - history_df: original cleaned history
-    - forecast_df: Prophet output for future periods only
-    """
     if df.empty:
         return (
             pd.DataFrame(columns=["ds", "y"]),
@@ -73,53 +64,29 @@ def forecast_series(
     return history_df, forecast_df
 
 
-def run_sales_forecast(periods: int = 15) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Returns:
-    - sales_history: columns ds, y
-    - sales_forecast: columns ds, yhat, yhat_lower, yhat_upper
-    """
-    sales_df = get_sales_series_for_forecast()
-    return forecast_series(sales_df, periods=periods)
+def _freq_to_prophet_rule(freq: str) -> str:
+    return {
+        "daily": "D",
+        "weekly": "W-SUN",
+        "monthly": "M",
+    }[freq]
 
 
-def run_units_forecast(periods: int = 15) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Returns:
-    - units_history: columns ds, y
-    - units_forecast: columns ds, yhat, yhat_lower, yhat_upper
-    """
-    units_df = get_units_series_for_forecast()
-    return forecast_series(units_df, periods=periods)
+def run_sales_forecast(periods: int = 15, freq: str = "daily") -> tuple[pd.DataFrame, pd.DataFrame]:
+    sales_df = get_sales_series_for_forecast(freq=freq)
+    return forecast_series(sales_df, periods=periods, freq=_freq_to_prophet_rule(freq))
 
+
+def run_units_forecast(periods: int = 15, freq: str = "daily") -> tuple[pd.DataFrame, pd.DataFrame]:
+    units_df = get_units_series_for_forecast(freq=freq)
+    return forecast_series(units_df, periods=periods, freq=_freq_to_prophet_rule(freq))
 
 
 def run_cashflow_projection(
     periods: int = 15,
+    freq: str = "daily",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Build future cash flow projection using:
-    - forecasted sales
-    - already loaded future expenses from DB
-    - last known bank balance
-
-    Returns:
-    - history_df:
-        date, sales_total, expenses_total, banks_total, net_income
-    - projection_df:
-        ds,
-        projected_sales,
-        projected_sales_min,
-        projected_sales_max,
-        projected_expenses,
-        projected_net_income,
-        projected_net_income_min,
-        projected_net_income_max,
-        projected_bank_balance,
-        projected_bank_balance_min,
-        projected_bank_balance_max
-    """
-    cashflow_history = get_cashflow_history()
+    cashflow_history = get_cashflow_history(freq=freq)
 
     if cashflow_history.empty:
         empty_history = pd.DataFrame(
@@ -142,8 +109,12 @@ def run_cashflow_projection(
         )
         return empty_history, empty_projection
 
-    sales_series = get_sales_series_for_forecast()
-    _, sales_forecast = forecast_series(sales_series, periods=periods)
+    sales_series = get_sales_series_for_forecast(freq=freq)
+    _, sales_forecast = forecast_series(
+        sales_series,
+        periods=periods,
+        freq=_freq_to_prophet_rule(freq),
+    )
 
     if sales_forecast.empty:
         empty_projection = pd.DataFrame(
@@ -164,22 +135,34 @@ def run_cashflow_projection(
         return cashflow_history, empty_projection
 
     projection_df = sales_forecast.copy()
-
     projection_df["ds"] = pd.to_datetime(projection_df["ds"])
 
-    # Bring future expenses from DB history/projection table
-    expenses_future = cashflow_history[["date", "expenses_total"]].copy()
-    expenses_future["date"] = pd.to_datetime(expenses_future["date"])
+    expenses_df = get_expenses_daily_totals()
+    if expenses_df.empty:
+        expenses_df = pd.DataFrame(columns=["date", "expenses_total"])
+    else:
+        expenses_df = expenses_df.copy()
+        expenses_df["date"] = pd.to_datetime(expenses_df["date"])
+
+        rule = _freq_to_prophet_rule(freq)
+        expenses_df = (
+            expenses_df.set_index("date")[["expenses_total"]]
+            .resample(rule)
+            .sum()
+            .reset_index()
+        )
 
     projection_df = projection_df.merge(
-        expenses_future,
+        expenses_df,
         left_on="ds",
         right_on="date",
         how="left"
     )
 
     projection_df["expenses_total"] = (
-        pd.to_numeric(projection_df["expenses_total"], errors="coerce").fillna(0).round(2)
+        pd.to_numeric(projection_df["expenses_total"], errors="coerce")
+        .fillna(0)
+        .round(2)
     )
 
     projection_df["projected_sales"] = projection_df["yhat"].round(2)
@@ -200,9 +183,14 @@ def run_cashflow_projection(
         projection_df["projected_sales_max"] - projection_df["projected_expenses"]
     ).round(2)
 
-    latest_bank_balance = (
-        pd.to_numeric(cashflow_history["banks_total"], errors="coerce").fillna(0).iloc[-1]
-    )
+    banks_df = get_banks_daily_totals()
+    if banks_df.empty:
+        latest_bank_balance = 0
+    else:
+        banks_df = banks_df.copy()
+        banks_df["date"] = pd.to_datetime(banks_df["date"])
+        banks_df = banks_df.sort_values("date").reset_index(drop=True)
+        latest_bank_balance = float(banks_df.iloc[-1]["banks_total"])
 
     projection_df["projected_bank_balance"] = (
         latest_bank_balance + projection_df["projected_net_income"].cumsum()

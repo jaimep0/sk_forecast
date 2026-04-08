@@ -6,35 +6,52 @@ from services.forecast_service import (
 )
 
 
-def get_sales_series_for_forecast() -> pd.DataFrame:
+def resample_series(df: pd.DataFrame, value_col: str, freq: str) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["ds", "y"])
+
+    freq_map = {
+        "daily": "D",
+        "weekly": "W-SUN",
+        "monthly": "M",
+    }
+
+    rule = freq_map[freq]
+
+    out = df.copy()
+    out["date"] = pd.to_datetime(out["date"])
+
+    out = (
+        out.set_index("date")[[value_col]]
+        .resample(rule)
+        .sum()
+        .reset_index()
+        .rename(columns={"date": "ds", value_col: "y"})
+    )
+
+    out["y"] = pd.to_numeric(out["y"], errors="coerce").fillna(0)
+    return out.sort_values("ds").reset_index(drop=True)
+
+
+def get_sales_series_for_forecast(freq: str = "daily") -> pd.DataFrame:
     sales_df, _ = get_sales_forecast_base_data()
 
     if sales_df.empty:
         return pd.DataFrame(columns=["ds", "y"])
 
-    df = sales_df.copy()
-    df = df.rename(columns={"date": "ds", "sales_total": "y"})
-    df["ds"] = pd.to_datetime(df["ds"])
-    df["y"] = pd.to_numeric(df["y"], errors="coerce").fillna(0)
-
-    return df.sort_values("ds").reset_index(drop=True)
+    return resample_series(sales_df, "sales_total", freq)
 
 
-def get_units_series_for_forecast() -> pd.DataFrame:
+def get_units_series_for_forecast(freq: str = "daily") -> pd.DataFrame:
     _, units_df = get_sales_forecast_base_data()
 
     if units_df.empty:
         return pd.DataFrame(columns=["ds", "y"])
 
-    df = units_df.copy()
-    df = df.rename(columns={"date": "ds", "units_total": "y"})
-    df["ds"] = pd.to_datetime(df["ds"])
-    df["y"] = pd.to_numeric(df["y"], errors="coerce").fillna(0)
-
-    return df.sort_values("ds").reset_index(drop=True)
+    return resample_series(units_df, "units_total", freq)
 
 
-def get_cashflow_history() -> pd.DataFrame:
+def get_cashflow_history(freq: str = "daily") -> pd.DataFrame:
     df = get_cashflow_base_data()
 
     if df.empty:
@@ -43,6 +60,7 @@ def get_cashflow_history() -> pd.DataFrame:
         )
 
     df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
 
     for col in ["sales_total", "expenses_total", "banks_total"]:
         if col not in df.columns:
@@ -52,6 +70,30 @@ def get_cashflow_history() -> pd.DataFrame:
     df["expenses_total"] = pd.to_numeric(df["expenses_total"], errors="coerce").fillna(0)
     df["banks_total"] = pd.to_numeric(df["banks_total"], errors="coerce").fillna(0)
 
-    df["net_income"] = df["sales_total"] - df["expenses_total"]
+    freq_map = {
+        "daily": "D",
+        "weekly": "W-SUN",
+        "monthly": "M",
+    }
 
-    return df.sort_values("date").reset_index(drop=True)
+    rule = freq_map[freq]
+
+    grouped = (
+        df.set_index("date")[["sales_total", "expenses_total"]]
+        .resample(rule)
+        .sum()
+        .reset_index()
+    )
+
+    banks = (
+        df.set_index("date")[["banks_total"]]
+        .resample(rule)
+        .last()
+        .reset_index()
+    )
+
+    out = grouped.merge(banks, on="date", how="left")
+    out["banks_total"] = out["banks_total"].ffill().fillna(0)
+    out["net_income"] = out["sales_total"] - out["expenses_total"]
+
+    return out.sort_values("date").reset_index(drop=True)

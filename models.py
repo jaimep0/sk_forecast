@@ -46,18 +46,23 @@ class Banks(Base):
     coppel = Column(Numeric(12, 2), nullable=False, default=0)
 
 
-class Debit(Base):
-    __tablename__ = "debit"
-
-    date = Column(Date, primary_key=True)
-
-    bbva = Column(Numeric(12, 2), nullable=False, default=0)
-    mp = Column(Numeric(12, 2), nullable=False, default=0)
-
-
 class Expenses(Base):
     __tablename__ = "expenses"
 
     date = Column(Date, primary_key=True)
     concept = Column(String, primary_key=True)
     total = Column(Numeric(12, 2), nullable=False, default=0)
+
+
+class AcquisitionExpense(Base):
+    __tablename__ = "acquisition_expense"
+
+    date = Column(Date, primary_key=True)
+
+    Amazon = Column(Numeric(12, 2), nullable=False, default=0)
+    Mercado_Libre = Column(Numeric(12, 2), nullable=False, default=0)
+    Facebook = Column(Numeric(12, 2), nullable=False, default=0)
+    Tiktok = Column(Numeric(12, 2), nullable=False, default=0)
+    Google = Column(Numeric(12, 2), nullable=False, default=0)
+    UGC_y_Colab = Column(Numeric(12, 2), nullable=False, default=0)
+    Otros = Column(Numeric(12, 2), nullable=False, default=0)

@@ -1,7 +1,7 @@
-from sqlalchemy import select
 import pandas as pd
+from sqlalchemy import select
 
-from database import engine
+from database import SessionLocal, engine
 from models import Units
 
 

@@ -1,8 +1,31 @@
-from sqlalchemy import select
 import pandas as pd
+from sqlalchemy import select
 
-from database import engine
+from database import SessionLocal, engine
 from models import Sales
+
+
+def get_sales_weekly_totals() -> pd.DataFrame:
+    df = get_sales_daily_totals()
+
+    if df.empty:
+        return pd.DataFrame(columns=["date", "sales_total"])
+
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+
+    # weekly bucket ending on Sunday
+    df["week_end"] = df["date"] + pd.to_timedelta(6 - df["date"].dt.weekday, unit="D")
+
+    weekly_df = (
+        df.groupby("week_end", as_index=False)["sales_total"]
+        .sum()
+        .rename(columns={"week_end": "date"})
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+
+    return weekly_df
 
 
 def get_sales_history() -> pd.DataFrame:

@@ -1,8 +1,102 @@
 from sqlalchemy import select
 import pandas as pd
+from datetime import date, timedelta
 
-from database import engine
+from database import SessionLocal, engine
 from models import Banks
+
+
+BANK_COLUMNS = [
+    "bbva",
+    "brg",
+    "mp",
+    "mp_liberar",
+    "shop",
+    "lvp",
+    "coppel",
+]
+
+
+def upsert_banks_row(
+    row_date,
+    bbva=0,
+    brg=0,
+    mp=0,
+    mp_liberar=0,
+    shop=0,
+    lvp=0,
+    coppel=0,
+):
+    session = SessionLocal()
+
+    try:
+        existing_row = session.query(Banks).filter(Banks.date == row_date).first()
+
+        if existing_row:
+            existing_row.bbva = bbva
+            existing_row.brg = brg
+            existing_row.mp = mp
+            existing_row.mp_liberar = mp_liberar
+            existing_row.shop = shop
+            existing_row.lvp = lvp
+            existing_row.coppel = coppel
+            inserted = 0
+            updated = 1
+        else:
+            new_row = Banks(
+                date=row_date,
+                bbva=bbva,
+                brg=brg,
+                mp=mp,
+                mp_liberar=mp_liberar,
+                shop=shop,
+                lvp=lvp,
+                coppel=coppel,
+            )
+            session.add(new_row)
+            inserted = 1
+            updated = 0
+
+        session.commit()
+        return inserted, updated
+
+    except Exception:
+        session.rollback()
+        raise
+
+    finally:
+        session.close()
+
+
+def get_latest_banks_date():
+    df = get_banks_history()
+    if df.empty:
+        return None
+    return df["date"].max().date()
+
+
+def get_missing_bank_week_end_dates_since_latest():
+    latest_date = get_latest_banks_date()
+    today = date.today()
+
+    # last completed Sunday
+    last_completed_week_end = (
+        today - timedelta(days=today.weekday() + 1)
+        if today.weekday() != 6
+        else today - timedelta(days=7)
+    )
+
+    if latest_date is None:
+        return [last_completed_week_end] if last_completed_week_end < today else []
+
+    missing_dates = []
+    current = latest_date + timedelta(days=7)
+
+    while current <= last_completed_week_end:
+        missing_dates.append(current)
+        current += timedelta(days=7)
+
+    return missing_dates
 
 
 def get_banks_history() -> pd.DataFrame:

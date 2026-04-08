@@ -1,0 +1,19 @@
+{
+    "ML": {
+        "client_id": "YOUR_CLIENT_ID",
+        "client_secret": "YOUR_CLIENT_SECRET",
+        "refresh_token": "YOUR_REFRESH_TOKEN",
+        "access_token": "ACCESS_TOKEN",
+        "user_id": "YOUR_USER_ID"
+    },
+    "SHOP": {
+        "api_key": "YOUR_API_KEY",
+        "api_secret": "YOUR_API_SECRET",
+        "api_token": "YOUR_API_TOKEN"
+    },
+    "WMART": {
+        "client_id": "YOUR_CLIENT_ID",
+        "client_secret": "YOUR_CLIENT_SECRET",
+        "access_token": "ACCESS_TOKEN"
+    }
+}
