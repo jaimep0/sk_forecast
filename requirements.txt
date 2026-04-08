@@ -9,3 +9,4 @@ pandas>=2.0
 requests
 python-dotenv
 psycopg2-binary
+dotenv

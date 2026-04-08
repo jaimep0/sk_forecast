@@ -78,10 +78,10 @@ def ml_by_day(start_date: str, end_date: str) -> tuple[pd.DataFrame, pd.DataFram
 
     base_url = "https://api.mercadolibre.com/orders/search"
     params = {
-        "seller": creds["ML"]["user_id"],
+        "seller": creds["user_id"],
         "order.date_created.from": start_date_api,
         "order.date_created.to": end_date_api,
-        "access_token": creds["ML"]["access_token"],
+        "access_token": creds["access_token"],
         "limit": 50,
         "offset": 0,
     }
@@ -96,7 +96,7 @@ def ml_by_day(start_date: str, end_date: str) -> tuple[pd.DataFrame, pd.DataFram
 
             creds = get_ml_creds()
 
-            params["access_token"] = creds["ML"]["access_token"]
+            params["access_token"] = creds["access_token"]
             response = requests.get(base_url, params=params)
             response.raise_for_status()
 

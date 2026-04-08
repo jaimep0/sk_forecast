@@ -85,7 +85,6 @@ def prepare_units_dataframe(uploaded_file) -> pd.DataFrame:
 
     return df
 
-
 def upsert_units_from_dataframe(df: pd.DataFrame) -> tuple[int, int]:
     session = SessionLocal()
     inserted = 0
