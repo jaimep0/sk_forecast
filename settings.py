@@ -5,16 +5,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def get_ml_creds():
-    return {
-        "client_id": os.getenv("ML_CLIENT_ID"),
-        "client_secret": os.getenv("ML_CLIENT_SECRET"),
-        "refresh_token": os.getenv("ML_REFRESH_TOKEN"),
-        "access_token": os.getenv("ML_ACCESS_TOKEN"),
-        "user_id": os.getenv("ML_USER_ID"),
-    }
-
-
 def get_ml_access_token():
     r = requests.post(
         "https://api.mercadolibre.com/oauth/token",
@@ -43,3 +33,7 @@ def get_ml_creds():
         "user_id": os.getenv("ML_USER_ID"),
         "access_token": get_ml_access_token(),
     }
+
+
+def get_shinnyskin_password():
+    return os.getenv("SHINNYSKIN_APP_PASSWORD", "")

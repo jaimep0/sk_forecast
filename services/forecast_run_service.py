@@ -5,8 +5,10 @@ from services.forecast_prepare_service import (
     get_units_series_for_forecast,
     get_cashflow_history,
 )
+
 from services.expenses_service import get_expenses_daily_totals
 from services.banks_service import get_banks_daily_totals
+from services.test_data_service import get_test_banks_daily_totals
 
 try:
     from prophet import Prophet
@@ -14,6 +16,12 @@ except ImportError as exc:
     raise ImportError(
         "Prophet is not installed. Install it with: pip install prophet"
     ) from exc
+
+from services.test_data_service import (
+    get_test_sales_series_for_forecast,
+    get_test_units_series_for_forecast,
+    get_test_cashflow_history,
+)
 
 
 def forecast_series(
@@ -72,21 +80,44 @@ def _freq_to_prophet_rule(freq: str) -> str:
     }[freq]
 
 
-def run_sales_forecast(periods: int = 15, freq: str = "daily") -> tuple[pd.DataFrame, pd.DataFrame]:
-    sales_df = get_sales_series_for_forecast(freq=freq)
+def run_sales_forecast(
+    periods: int = 15,
+    freq: str = "daily",
+    mode: str = "shinny",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if mode == "test":
+        sales_df = get_test_sales_series_for_forecast(freq=freq)
+    else:
+        sales_df = get_sales_series_for_forecast(freq=freq)
+
     return forecast_series(sales_df, periods=periods, freq=_freq_to_prophet_rule(freq))
 
 
-def run_units_forecast(periods: int = 15, freq: str = "daily") -> tuple[pd.DataFrame, pd.DataFrame]:
-    units_df = get_units_series_for_forecast(freq=freq)
+
+def run_units_forecast(
+    periods: int = 15,
+    freq: str = "daily",
+    mode: str = "shinny",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if mode == "test":
+        units_df = get_test_units_series_for_forecast(freq=freq)
+    else:
+        units_df = get_units_series_for_forecast(freq=freq)
+
     return forecast_series(units_df, periods=periods, freq=_freq_to_prophet_rule(freq))
 
 
 def run_cashflow_projection(
     periods: int = 15,
     freq: str = "daily",
+    mode: str = "shinny",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    cashflow_history = get_cashflow_history(freq=freq)
+    if mode == "test":
+        cashflow_history = get_test_cashflow_history(freq=freq)
+        sales_series = get_test_sales_series_for_forecast(freq=freq)
+    else:
+        cashflow_history = get_cashflow_history(freq=freq)
+        sales_series = get_sales_series_for_forecast(freq=freq)
 
     if cashflow_history.empty:
         empty_history = pd.DataFrame(
@@ -109,7 +140,6 @@ def run_cashflow_projection(
         )
         return empty_history, empty_projection
 
-    sales_series = get_sales_series_for_forecast(freq=freq)
     _, sales_forecast = forecast_series(
         sales_series,
         periods=periods,
@@ -137,23 +167,11 @@ def run_cashflow_projection(
     projection_df = sales_forecast.copy()
     projection_df["ds"] = pd.to_datetime(projection_df["ds"])
 
-    expenses_df = get_expenses_daily_totals()
-    if expenses_df.empty:
-        expenses_df = pd.DataFrame(columns=["date", "expenses_total"])
-    else:
-        expenses_df = expenses_df.copy()
-        expenses_df["date"] = pd.to_datetime(expenses_df["date"])
-
-        rule = _freq_to_prophet_rule(freq)
-        expenses_df = (
-            expenses_df.set_index("date")[["expenses_total"]]
-            .resample(rule)
-            .sum()
-            .reset_index()
-        )
+    expenses_future = cashflow_history[["date", "expenses_total"]].copy()
+    expenses_future["date"] = pd.to_datetime(expenses_future["date"])
 
     projection_df = projection_df.merge(
-        expenses_df,
+        expenses_future,
         left_on="ds",
         right_on="date",
         how="left"
@@ -183,14 +201,11 @@ def run_cashflow_projection(
         projection_df["projected_sales_max"] - projection_df["projected_expenses"]
     ).round(2)
 
-    banks_df = get_banks_daily_totals()
-    if banks_df.empty:
-        latest_bank_balance = 0
+    if mode == "test":
+        banks_df = get_test_banks_daily_totals()
+        latest_bank_balance = float(banks_df["banks_total"].iloc[-1]) if not banks_df.empty else 0
     else:
-        banks_df = banks_df.copy()
-        banks_df["date"] = pd.to_datetime(banks_df["date"])
-        banks_df = banks_df.sort_values("date").reset_index(drop=True)
-        latest_bank_balance = float(banks_df.iloc[-1]["banks_total"])
+        latest_bank_balance = float(cashflow_history["banks_total"].iloc[-1]) if not cashflow_history.empty else 0
 
     projection_df["projected_bank_balance"] = (
         latest_bank_balance + projection_df["projected_net_income"].cumsum()

@@ -41,6 +41,9 @@ from services.acquisition_expense_service import (
 
 from services.roas_service import get_last_6_weeks_roas
 
+from settings import get_shinnyskin_password
+from services.roas_service import get_last_6_weeks_roas_by_mode
+
 COLUMN_LABELS = {
     "date": "Date",
     "forecast": "Forecast",
@@ -108,6 +111,11 @@ def render_upload_section(
         except Exception as e:
             st.error(f"Error processing file: {e}")
 
+if "app_mode" not in st.session_state:
+    st.session_state.app_mode = None
+
+if "authenticated_shinny" not in st.session_state:
+    st.session_state.authenticated_shinny = False
 
 
 def render_forecast_chart(
@@ -361,8 +369,10 @@ def render_sales_forecast():
 
     if st.session_state.get("run_sales_units_forecast"):
         try:
-            _, sales_forecast = run_sales_forecast(periods=periods, freq=freq)
-            _, units_forecast = run_units_forecast(periods=periods, freq=freq)
+            mode = st.session_state.get("app_mode", "shinny")
+
+            _, sales_forecast = run_sales_forecast(periods=periods, freq=freq, mode=mode)
+            _, units_forecast = run_units_forecast(periods=periods, freq=freq, mode=mode)
 
             st.markdown("### Sales Forecast Table")
             if sales_forecast.empty:
@@ -432,8 +442,10 @@ def render_cashflow():
 
     if st.session_state.get("run_cashflow_projection"):
         try:
-            _, cashflow_projection = run_cashflow_projection(periods=periods, freq=freq)
+            mode = st.session_state.get("app_mode", "shinny")
 
+            _, cashflow_projection = run_cashflow_projection(periods=periods, freq=freq, mode=mode)
+            
             if cashflow_projection.empty:
                 st.warning("No cash flow projection available.")
             else:
@@ -462,66 +474,70 @@ def render_cashflow():
 
 
 def render_roas():
+    mode = st.session_state.get("app_mode", "shinny")
     st.subheader("ROAS")
 
-    latest_date = get_latest_acquisition_expense_date()
-    if latest_date is None:
-        st.info("No acquisition expense data saved yet.")
-    else:
-        st.write(f"Latest date with data: **{latest_date}**")
-
-    if "roas_use_manual_date" not in st.session_state:
-        st.session_state.roas_use_manual_date = False
-
-    if st.button("Update data", key="roas_update_data_button"):
-        st.session_state.roas_show_update = True
-
-    if st.session_state.get("roas_show_update"):
-        missing_dates = get_missing_week_end_dates_since_latest()
-
-        options = ["Manual date"] + [d.isoformat() for d in missing_dates]
-
-        selected_option = st.selectbox(
-            "Select week date to update",
-            options=options,
-            key="roas_date_selector",
-        )
-
-        if selected_option == "Manual date":
-            selected_date = st.date_input(
-                "Choose any date",
-                value=date.today(),
-                key="roas_manual_date_input",
-            )
+    if mode == "shinny":
+        latest_date = get_latest_acquisition_expense_date()
+        if latest_date is None:
+            st.info("No acquisition expense data saved yet.")
         else:
-            selected_date = pd.to_datetime(selected_option).date()
+            st.write(f"Latest date with data: **{latest_date}**")
 
-        st.markdown("### Acquisition expense inputs")
+        if "roas_use_manual_date" not in st.session_state:
+            st.session_state.roas_use_manual_date = False
 
-        amazon = st.number_input("Amazon", min_value=0.0, value=0.0, step=100.0, key="roas_amazon")
-        mercado_libre = st.number_input("Mercado Libre", min_value=0.0, value=0.0, step=100.0, key="roas_ml")
-        facebook = st.number_input("Facebook", min_value=0.0, value=0.0, step=100.0, key="roas_facebook")
-        tiktok = st.number_input("Tiktok", min_value=0.0, value=0.0, step=100.0, key="roas_tiktok")
-        google = st.number_input("Google", min_value=0.0, value=0.0, step=100.0, key="roas_google")
-        ugc_colab = st.number_input("UGC_y_Colab", min_value=0.0, value=0.0, step=100.0, key="roas_ugc")
-        otros = st.number_input("Otros", min_value=0.0, value=0.0, step=100.0, key="roas_otros")
+        if st.button("Update data", key="roas_update_data_button"):
+            st.session_state.roas_show_update = True
 
-        if st.button("Save acquisition expense", key="roas_save_button"):
-            inserted, updated = upsert_acquisition_expense_row(
-                row_date=selected_date,
-                Amazon=amazon,
-                Mercado_Libre=mercado_libre,
-                Facebook=facebook,
-                Tiktok=tiktok,
-                Google=google,
-                UGC_y_Colab=ugc_colab,
-                Otros=otros,
+        if st.session_state.get("roas_show_update"):
+            missing_dates = get_missing_week_end_dates_since_latest()
+            options = ["Manual date"] + [d.isoformat() for d in missing_dates]
+
+            selected_option = st.selectbox(
+                "Select week date to update",
+                options=options,
+                key="roas_date_selector",
             )
-            st.success(f"Saved successfully. Inserted: {inserted}, Updated: {updated}")
+
+            if selected_option == "Manual date":
+                selected_date = st.date_input(
+                    "Choose any date",
+                    value=date.today(),
+                    key="roas_manual_date_input",
+                )
+            else:
+                selected_date = pd.to_datetime(selected_option).date()
+
+            st.markdown("### Acquisition expense inputs")
+
+            amazon = st.number_input("Amazon", min_value=0.0, value=0.0, step=100.0, key="roas_amazon")
+            mercado_libre = st.number_input("Mercado Libre", min_value=0.0, value=0.0, step=100.0, key="roas_ml")
+            facebook = st.number_input("Facebook", min_value=0.0, value=0.0, step=100.0, key="roas_facebook")
+            tiktok = st.number_input("Tiktok", min_value=0.0, value=0.0, step=100.0, key="roas_tiktok")
+            google = st.number_input("Google", min_value=0.0, value=0.0, step=100.0, key="roas_google")
+            ugc_colab = st.number_input("UGC_y_Colab", min_value=0.0, value=0.0, step=100.0, key="roas_ugc")
+            otros = st.number_input("Otros", min_value=0.0, value=0.0, step=100.0, key="roas_otros")
+
+            if st.button("Save acquisition expense", key="roas_save_button"):
+                inserted, updated = upsert_acquisition_expense_row(
+                    row_date=selected_date,
+                    Amazon=amazon,
+                    Mercado_Libre=mercado_libre,
+                    Facebook=facebook,
+                    Tiktok=tiktok,
+                    Google=google,
+                    UGC_y_Colab=ugc_colab,
+                    Otros=otros,
+                )
+                st.success(f"Saved successfully. Inserted: {inserted}, Updated: {updated}")
+
+    else:
+        st.info("Test mode uses static sample data.")
 
     st.markdown("### ROAS - Last 6 weeks")
 
-    roas_df = get_last_6_weeks_roas()
+    roas_df = get_last_6_weeks_roas_by_mode(mode=mode)
 
     if roas_df.empty:
         st.warning("No ROAS data available yet.")
@@ -623,12 +639,62 @@ def render_amazon_upload_section():
                 st.error(f"Error uploading Amazon files: {e}")
 
 
+def render_mode_selector():
+    st.title("Select Environment")
+    st.caption("Choose the environment you want to access.")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("Shinny Skin", key="select_shinny", use_container_width=True):
+            st.session_state.app_mode = "shinny"
+            st.rerun()
+
+    with col2:
+        if st.button("Test", key="select_test", use_container_width=True):
+            st.session_state.app_mode = "test"
+            st.rerun()
+
+
+def render_shinny_login():
+    st.title("Shinny Skin Access")
+    st.caption("Enter password to access the private environment.")
+
+    password = st.text_input("Password", type="password", key="shinny_password_input")
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        if st.button("Enter", key="shinny_enter", use_container_width=True):
+            if password == get_shinnyskin_password():
+                st.session_state.authenticated_shinny = True
+                st.rerun()
+            else:
+                st.error("Incorrect password.")
+
+    with col2:
+        if st.button("Back", key="shinny_back", use_container_width=True):
+            st.session_state.app_mode = None
+            st.session_state.authenticated_shinny = False
+            st.session_state.selected_option = None
+            st.session_state.shinny_password_input = ""
+            st.rerun()
+
+
+def render_mode_banner():
+    mode = st.session_state.get("app_mode")
+    if mode == "shinny":
+        st.info("Mode: Shinny Skin")
+    elif mode == "test":
+        st.info("Mode: Test")
+
+
 def render_home():
     st.markdown(
         """
         <style>
         .block-container {
-            padding-top: 2rem;
+            padding-top: 4rem;
             padding-bottom: 2rem;
             max-width: 1200px;
         }
@@ -643,34 +709,46 @@ def render_home():
         unsafe_allow_html=True,
     )
 
+    mode = st.session_state.get("app_mode")
+
     st.title("Forecast Dashboard")
     st.caption("Update your operational data and monitor forecasts, cash flow, and ROAS.")
 
-    if "selected_option" not in st.session_state:
-        st.session_state.selected_option = None
+    render_mode_banner()
+
+    col_back, _ = st.columns([1, 4])
+    with col_back:
+        if st.button("Back to selector", use_container_width=True):
+            st.session_state.app_mode = None
+            st.session_state.authenticated_shinny = False
+            st.session_state.selected_option = None
+            st.rerun()
+
+    st.markdown("### Navigation")
 
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        if st.button("Update Data"):
-            st.session_state.selected_option = "update_data"
+        if mode == "shinny":
+            if st.button("Update Data", use_container_width=True):
+                st.session_state.selected_option = "update_data"
 
     with col2:
-        if st.button("Sales Forecast"):
+        if st.button("Sales Forecast", use_container_width=True):
             st.session_state.selected_option = "sales_forecast"
 
     with col3:
-        if st.button("Cash Flow"):
+        if st.button("Cash Flow", use_container_width=True):
             st.session_state.selected_option = "cash_flow"
 
     with col4:
-        if st.button("ROAS"):
+        if st.button("ROAS", use_container_width=True):
             st.session_state.selected_option = "roas"
 
     st.markdown("---")
 
-    if st.session_state.selected_option is None:
-        st.info("Choose a module to continue.")
+    if st.session_state.get("selected_option") is None:
+        st.info("Choose an option to continue.")
         
 
 def route_page():
@@ -759,6 +837,16 @@ def render_pretty_table(
 
 
 def main():
+    mode = st.session_state.get("app_mode")
+
+    if mode is None:
+        render_mode_selector()
+        return
+
+    if mode == "shinny" and not st.session_state.get("authenticated_shinny", False):
+        render_shinny_login()
+        return
+
     render_home()
     route_page()
 

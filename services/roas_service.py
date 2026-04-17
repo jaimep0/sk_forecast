@@ -2,6 +2,7 @@ import pandas as pd
 
 from services.sales_service import get_sales_weekly_totals
 from services.acquisition_expense_service import get_acquisition_expense_daily_totals
+from services.test_data_service import get_test_last_6_weeks_roas
 
 
 def get_roas_history() -> pd.DataFrame:
@@ -51,3 +52,8 @@ def get_last_6_weeks_roas() -> pd.DataFrame:
         return df
 
     return df.sort_values("date").tail(6).reset_index(drop=True)
+
+def get_last_6_weeks_roas_by_mode(mode: str = "shinny") -> pd.DataFrame:
+    if mode == "test":
+        return get_test_last_6_weeks_roas()
+    return get_last_6_weeks_roas()
