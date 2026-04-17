@@ -1,43 +1,115 @@
 # SK Forecast
 
-SK Forecast is a data-driven forecasting dashboard built to clean, structure, and analyze operational datasets for business decision-making.
+SK Forecast is a forecasting and business intelligence dashboard designed to turn scattered operational and commercial data into actionable business decisions.
 
-The project is designed to transform raw commercial and financial data into actionable forecasts, with a practical focus on:
+It was built for real e-commerce operations, with a focus on consolidating marketplace, financial, and marketing data into one system that supports forecasting, cash flow planning, and performance tracking.
+
+## What it does
+
+SK Forecast centralizes data from multiple sources and transforms it into a structured decision-support tool.
+
+The dashboard currently supports:
 
 - sales forecasting
+- units forecasting
 - cash flow projection
 - ROAS tracking
-- weekly and monthly business monitoring
-- marketplace data consolidation
-
-## Purpose
-
-This project helps convert fragmented business data from marketplaces, expenses, bank balances, and acquisition costs into a centralized forecasting system that can be accessed through an interactive dashboard.
-
-Its goal is not only to visualize historical performance, but also to support forward-looking decisions through structured forecasting models.
+- marketplace data ingestion
+- bank balance monitoring
+- acquisition expense tracking
+- manual and automated data update flows
 
 ## Main Features
 
-- **Data cleaning and transformation**
-  - prepares raw datasets from different sources for analysis
-  - standardizes marketplace and product-level data
-  - converts operational files into database-ready structures
+### 1. Sales and Units Forecasting
+Forecasts commercial performance using historical sales and units data.
 
-- **Sales forecasting**
-  - forecasts sales using historical transactional data
-  - supports daily, weekly, and monthly aggregation
+Supports:
+- daily view
+- weekly view
+- monthly view
 
-- **Cash flow projection**
-  - combines projected sales, planned expenses, and current balances
-  - estimates future cash position under different forecast scenarios
+Outputs:
+- forecast
+- min scenario
+- max scenario
+- interactive charts with forecast bands
 
-- **ROAS tracking**
-  - calculates return on ad spend from weekly acquisition expense data
-  - compares sales performance against marketing investment
+### 2. Cash Flow Projection
+Projects future balance using:
 
-- **Marketplace uploads**
-  - supports structured uploads from multiple data sources
-  - includes automated and manual update flows for marketplaces such as Mercado Libre and Amazon
+- forecasted sales
+- already planned expenses
+- latest registered bank balance
+
+This allows the system to estimate future liquidity under different scenarios.
+
+### 3. ROAS Tracking
+Measures return on ad spend by comparing weekly sales against weekly acquisition expense across channels such as:
+
+- Amazon
+- Mercado Libre
+- Facebook
+- Tiktok
+- Google
+- UGC & collaborations
+- Others
+
+### 4. Marketplace Data Ingestion
+The dashboard supports different ingestion flows depending on source:
+
+- **Mercado Libre**
+  - API-based update flow
+  - token refresh handling
+  - normalization of product titles
+  - conversion into sales and units structures
+
+- **Amazon**
+  - TXT file upload
+  - multi-file support
+  - SKU normalization
+  - conversion into sales and units structures
+
+### 5. Financial Data Management
+Supports upload and maintenance of:
+
+- expenses
+- bank balances
+- acquisition expense
+- marketplace-derived sales and units
+
+### 6. Environment Selector
+The app includes two access modes:
+
+- **Shinny Skin**
+  - private environment
+  - password-protected
+  - uses real operational data
+
+- **Test**
+  - public demo environment
+  - uses sample CSV data
+  - safe to share without exposing private information
+
+This allows the dashboard to function both as an internal business tool and as a public portfolio/demo product.
+
+---
+
+## Why it was built
+
+Many businesses manage critical decisions with fragmented spreadsheets, marketplace exports, and disconnected financial records.
+
+SK Forecast was created to solve that problem by offering:
+
+- cleaner data structure
+- centralized visualization
+- forward-looking forecasts
+- faster financial interpretation
+- a reusable operational dashboard for business decision-making
+
+It is not just a reporting tool. It is a forecasting system built around actual business workflows.
+
+---
 
 ## Tech Stack
 
@@ -47,17 +119,10 @@ Its goal is not only to visualize historical performance, but also to support fo
 - **SQLAlchemy**
 - **Prophet**
 - **PostgreSQL / SQLite**
-- **dotenv for environment variable management**
+- **dotenv**
+- **Plotly**
 
-## Use Cases
-
-SK Forecast is especially useful for:
-
-- e-commerce businesses
-- marketplace sellers
-- operators managing multi-channel sales
-- teams that need quick financial visibility
-- founders who want forecasting tools without relying on spreadsheets alone
+---
 
 ## Project Structure
 
@@ -69,9 +134,15 @@ sk_forecast/
 ├── settings.py
 ├── requirements.txt
 ├── README.md
+├── sample_data/
+│   ├── example_sales.csv
+│   ├── example_units.csv
+│   ├── example_expenses.csv
+│   ├── example_banks.csv
+│   └── example_acquisition_expense.csv
 └── services/
-    ├── amazon_upload_service.py
     ├── acquisition_expense_service.py
+    ├── amazon_upload_service.py
     ├── banks_service.py
     ├── expenses_service.py
     ├── forecast_prepare_service.py
@@ -80,4 +151,5 @@ sk_forecast/
     ├── ml_update_service.py
     ├── roas_service.py
     ├── sales_service.py
+    ├── test_data_service.py
     └── units_service.py
