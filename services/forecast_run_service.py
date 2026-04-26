@@ -6,10 +6,10 @@ from services.forecast_prepare_service import (
     get_units_series_for_forecast,
 )
 from services.test_data_service import (
-    get_test_banks_daily_totals,
-    get_test_cashflow_history,
     get_test_sales_series_for_forecast,
     get_test_units_series_for_forecast,
+    get_test_banks_daily_totals,
+    get_test_cashflow_history,
 )
 
 try:
@@ -17,7 +17,13 @@ try:
 except ImportError as exc:
     raise ImportError("Prophet is not installed. Install it with: pip install prophet") from exc
 
-FREQ_MAP = {"daily": "D", "weekly": "W-SUN", "monthly": "M"}
+
+FREQ_MAP = {
+    "daily": "D",
+    "weekly": "W-SUN",
+    "monthly": "M",
+}
+
 PROJECTION_COLUMNS = [
     "ds",
     "projected_sales",
@@ -40,6 +46,7 @@ def forecast_series(
     growth: str = "linear",
     past_periods_to_show: int = 4,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Forecast a ds/y series and keep only recent history plus future periods."""
     empty_history = pd.DataFrame(columns=["ds", "y"])
     empty_forecast = pd.DataFrame(columns=["ds", "yhat", "yhat_lower", "yhat_upper", "real"])
 
@@ -47,7 +54,7 @@ def forecast_series(
         return empty_history, empty_forecast
 
     history_df = df.copy()[["ds", "y"]]
-    history_df["ds"] = pd.to_datetime(history_df["ds"])
+    history_df["ds"] = pd.to_datetime(history_df["ds"], errors="coerce")
     history_df["y"] = pd.to_numeric(history_df["y"], errors="coerce")
     history_df = history_df.dropna(subset=["ds", "y"]).sort_values("ds").reset_index(drop=True)
 
@@ -72,31 +79,150 @@ def forecast_series(
         .round(2)
     )
 
-    # merge real values to be able to plot dots on historical part
     df_final = forecast_df.merge(
         history_df.rename(columns={"y": "real"}),
         on="ds",
         how="left",
     )
 
-    # keep only last N historical fitted rows + all future rows
     last_history_date = history_df["ds"].max()
     past_part = df_final[df_final["ds"] <= last_history_date].tail(past_periods_to_show)
     future_part = df_final[df_final["ds"] > last_history_date]
 
     df_final = pd.concat([past_part, future_part], ignore_index=True)
-
     return history_df, df_final
 
 
 def _freq_to_prophet_rule(freq: str) -> str:
-    return FREQ_MAP[freq]
+    return FREQ_MAP.get(freq, "D")
 
 
 def _series_by_mode(mode: str, freq: str, kind: str) -> pd.DataFrame:
     if kind == "sales":
-        return get_test_sales_series_for_forecast(freq=freq) if mode == "test" else get_sales_series_for_forecast(freq=freq)
-    return get_test_units_series_for_forecast(freq=freq) if mode == "test" else get_units_series_for_forecast(freq=freq)
+        if mode == "test":
+            return get_test_sales_series_for_forecast(freq=freq)
+        return get_sales_series_for_forecast(freq=freq)
+
+    if mode == "test":
+        return get_test_units_series_for_forecast(freq=freq)
+    return get_units_series_for_forecast(freq=freq)
+
+
+def _empty_projection() -> pd.DataFrame:
+    return pd.DataFrame(columns=[*PROJECTION_COLUMNS, "real_balance"])
+
+
+def _clean_cashflow_history(cashflow_history: pd.DataFrame) -> pd.DataFrame:
+    """Normalize cashflow history columns without inventing fake bank balances."""
+    required_columns = ["date", "sales_total", "expenses_total", "banks_total", "net_income"]
+
+    if cashflow_history.empty:
+        return pd.DataFrame(columns=required_columns)
+
+    out = cashflow_history.copy()
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out = out.dropna(subset=["date"])
+
+    for col in ["sales_total", "expenses_total", "banks_total"]:
+        if col not in out.columns:
+            out[col] = pd.NA
+
+    out["sales_total"] = pd.to_numeric(out["sales_total"], errors="coerce").fillna(0)
+    out["expenses_total"] = pd.to_numeric(out["expenses_total"], errors="coerce").fillna(0)
+
+    # Do not fill bank balances with 0. Missing bank balances must stay missing.
+    out["banks_total"] = pd.to_numeric(out["banks_total"], errors="coerce")
+
+    out["net_income"] = out["sales_total"] - out["expenses_total"]
+    return out[required_columns].sort_values("date").reset_index(drop=True)
+
+
+def _real_balances_by_mode(
+    mode: str,
+    freq: str,
+    cashflow_history: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Return real bank balances aligned to the selected frequency.
+
+    Important:
+    - Do NOT forward-fill bank balances.
+    - Do NOT create 0 balances for missing dates.
+    - Only dates with real loaded bank data should appear as real_balance.
+    """
+    rule = _freq_to_prophet_rule(freq)
+
+    if mode == "test":
+        banks_df = get_test_banks_daily_totals().copy()
+    else:
+        banks_df = cashflow_history[["date", "banks_total"]].copy()
+
+    if banks_df.empty:
+        return pd.DataFrame(columns=["ds", "real_balance"])
+
+    banks_df["date"] = pd.to_datetime(banks_df["date"], errors="coerce")
+    banks_df["banks_total"] = pd.to_numeric(banks_df["banks_total"], errors="coerce")
+    banks_df = banks_df.dropna(subset=["date", "banks_total"])
+
+    # Very important: remove fake zeros.
+    banks_df = banks_df[banks_df["banks_total"] > 0]
+
+    if banks_df.empty:
+        return pd.DataFrame(columns=["ds", "real_balance"])
+
+    if freq == "daily":
+        real_balances = banks_df.rename(
+            columns={
+                "date": "ds",
+                "banks_total": "real_balance",
+            }
+        )[["ds", "real_balance"]]
+
+    else:
+        # Align real bank dates to the same period labels used by the forecast.
+        # Weekly forecast uses W-SUN, so a Monday bank row belongs to the Sunday
+        # closing period of that week.
+        real_balances = (
+            banks_df.set_index("date")[["banks_total"]]
+            .resample(rule)
+            .last()
+            .dropna()
+            .reset_index()
+            .rename(columns={"date": "ds", "banks_total": "real_balance"})
+        )
+
+    real_balances["ds"] = pd.to_datetime(real_balances["ds"], errors="coerce")
+    real_balances["real_balance"] = pd.to_numeric(real_balances["real_balance"], errors="coerce")
+
+    real_balances = real_balances.dropna(subset=["ds", "real_balance"])
+    real_balances = real_balances[real_balances["real_balance"] > 0]
+
+    return real_balances.sort_values("ds").reset_index(drop=True)
+
+
+def _patch_history_with_real_balances(
+    cashflow_history: pd.DataFrame,
+    real_balances: pd.DataFrame,
+) -> pd.DataFrame:
+    """Replace bad/fake bank totals in history with the clean aligned balances."""
+    if cashflow_history.empty:
+        return cashflow_history
+
+    out = cashflow_history.copy()
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+
+    if real_balances.empty:
+        out["banks_total"] = pd.NA
+        return out
+
+    clean_real = real_balances.rename(columns={"ds": "date", "real_balance": "clean_banks_total"})
+    clean_real["date"] = pd.to_datetime(clean_real["date"], errors="coerce")
+
+    out = out.drop(columns=["clean_banks_total"], errors="ignore")
+    out = out.merge(clean_real[["date", "clean_banks_total"]], on="date", how="left")
+    out["banks_total"] = pd.to_numeric(out["clean_banks_total"], errors="coerce")
+    out = out.drop(columns=["clean_banks_total"])
+    return out.sort_values("date").reset_index(drop=True)
 
 
 def run_sales_forecast(
@@ -133,13 +259,15 @@ def run_cashflow_projection(
     mode: str = "shinny",
     past_periods_to_show: int = 4,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    cashflow_history = get_test_cashflow_history(freq=freq) if mode == "test" else get_cashflow_history(freq=freq)
+    raw_cashflow_history = get_test_cashflow_history(freq=freq) if mode == "test" else get_cashflow_history(freq=freq)
+    cashflow_history = _clean_cashflow_history(raw_cashflow_history)
     sales_series = _series_by_mode(mode, freq, "sales")
 
-    empty_projection = pd.DataFrame(columns=[*PROJECTION_COLUMNS, "real_balance"])
     if cashflow_history.empty:
-        empty_history = pd.DataFrame(columns=["date", "sales_total", "expenses_total", "banks_total", "net_income"])
-        return empty_history, empty_projection
+        return cashflow_history, _empty_projection()
+
+    real_balances = _real_balances_by_mode(mode, freq, cashflow_history)
+    cashflow_history = _patch_history_with_real_balances(cashflow_history, real_balances)
 
     _, sales_forecast = forecast_series(
         sales_series,
@@ -147,176 +275,102 @@ def run_cashflow_projection(
         freq=_freq_to_prophet_rule(freq),
         past_periods_to_show=past_periods_to_show,
     )
-    if sales_forecast.empty:
-        return cashflow_history, empty_projection
-
-    projection_df = sales_forecast.copy()
-    projection_df["ds"] = pd.to_datetime(projection_df["ds"])
-
-    expenses_future = cashflow_history[["date", "expenses_total"]].copy()
-    expenses_future["date"] = pd.to_datetime(expenses_future["date"])
-    projection_df = projection_df.merge(expenses_future, left_on="ds", right_on="date", how="left")
-    projection_df["expenses_total"] = pd.to_numeric(projection_df["expenses_total"], errors="coerce").fillna(0).round(2)
-
-    real_balances = cashflow_history[["date", "banks_total"]].copy()
-    real_balances["date"] = pd.to_datetime(real_balances["date"])
-    projection_df = projection_df.merge(real_balances, left_on="ds", right_on="date", how="left", suffixes=("", "_real"))
-    projection_df["real_balance"] = pd.to_numeric(projection_df["banks_total"], errors="coerce")
-
-    projection_df["projected_sales"] = projection_df["yhat"].round(2)
-    projection_df["projected_sales_min"] = projection_df["yhat_lower"].round(2)
-    projection_df["projected_sales_max"] = projection_df["yhat_upper"].round(2)
-    projection_df["projected_expenses"] = projection_df["expenses_total"]
-
-    for suffix, sales_col in [("", "projected_sales"), ("_min", "projected_sales_min"), ("_max", "projected_sales_max")]:
-        projection_df[f"projected_net_income{suffix}"] = (projection_df[sales_col] - projection_df["projected_expenses"]).round(2)
-
-    if mode == "test":
-        banks_df = get_test_banks_daily_totals()
-        latest_bank_balance = float(banks_df["banks_total"].iloc[-1]) if not banks_df.empty else 0
-    else:
-        latest_bank_balance = float(cashflow_history["banks_total"].iloc[-1]) if not cashflow_history.empty else 0
-
-    for suffix, net_col in [("", "projected_net_income"), ("_min", "projected_net_income_min"), ("_max", "projected_net_income_max")]:
-        projection_df[f"projected_bank_balance{suffix}"] = (latest_bank_balance + projection_df[net_col].cumsum()).round(2)
-
-    output_columns = [*PROJECTION_COLUMNS, "real_balance"]
-    return cashflow_history, projection_df[output_columns].reset_index(drop=True)
-
-    freq_code = FREQ_MAP[freq]
-
-    if mode == "test":
-        from services.test_data_service import (
-            get_test_sales_series_for_forecast,
-            get_test_expenses_daily_totals,
-            get_test_banks_daily_totals,
-        )
-
-        sales_df = get_test_sales_series_for_forecast(freq="daily")
-        expenses_df = get_test_expenses_daily_totals().copy()
-        banks_df = get_test_banks_daily_totals().copy()
-    else:
-        sales_df = get_sales_series_for_forecast(freq="daily")
-        expenses_df = get_expenses_daily_totals().copy()
-        banks_df = get_banks_daily_totals().copy()
-
-    empty_projection = pd.DataFrame(columns=PROJECTION_COLUMNS + ["real_balance"])
-
-    if sales_df.empty:
-        return pd.DataFrame(columns=["ds", "y"]), empty_projection
-
-    # ---- sales forecast (daily) ----
-    sales_history, sales_forecast = forecast_series(
-        sales_df,
-        periods=periods * 31 if freq != "daily" else periods,
-        freq="D",
-        past_periods_to_show=4,
-    )
 
     if sales_forecast.empty:
-        return sales_history, empty_projection
+        return cashflow_history, _empty_projection()
 
-    sales_forecast = sales_forecast.rename(
-        columns={
-            "yhat": "projected_sales",
-            "yhat_lower": "projected_sales_min",
-            "yhat_upper": "projected_sales_max",
-            "real": "real_sales",
-        }
-    )
+    projection = sales_forecast.copy()
+    projection["ds"] = pd.to_datetime(projection["ds"], errors="coerce")
+    projection = projection.dropna(subset=["ds"])
 
-    sales_forecast["ds"] = pd.to_datetime(sales_forecast["ds"])
+    expenses = cashflow_history[["date", "expenses_total"]].copy()
+    expenses["date"] = pd.to_datetime(expenses["date"], errors="coerce")
+    expenses["expenses_total"] = pd.to_numeric(expenses["expenses_total"], errors="coerce").fillna(0)
 
-    # ---- expenses ----
-    expenses_df["date"] = pd.to_datetime(expenses_df["date"])
-    expenses_df["expenses_total"] = pd.to_numeric(expenses_df["expenses_total"], errors="coerce").fillna(0)
-
-    # ---- banks ----
-    banks_df["date"] = pd.to_datetime(banks_df["date"])
-    banks_df["banks_total"] = pd.to_numeric(banks_df["banks_total"], errors="coerce").fillna(0)
-
-    latest_real_balance = float(banks_df.sort_values("date")["banks_total"].iloc[-1]) if not banks_df.empty else 0.0
-    last_real_balance_date = banks_df["date"].max() if not banks_df.empty else None
-
-    # ---- merge expenses into forecast ----
-    projection = sales_forecast.merge(
-        expenses_df[["date", "expenses_total"]],
-        left_on="ds",
-        right_on="date",
-        how="left",
-    )
-
-    projection["expenses_total"] = projection["expenses_total"].fillna(0)
-    projection = projection.drop(columns=["date"])
-
-    # ---- net income ----
-    projection["projected_net_income"] = projection["projected_sales"] - projection["expenses_total"]
-    projection["projected_net_income_min"] = projection["projected_sales_min"] - projection["expenses_total"]
-    projection["projected_net_income_max"] = projection["projected_sales_max"] - projection["expenses_total"]
-
-    # ---- split past fitted rows vs future rows ----
-    if last_real_balance_date is not None:
-        past_mask = projection["ds"] <= last_real_balance_date
-        future_mask = projection["ds"] > last_real_balance_date
-    else:
-        past_mask = pd.Series([False] * len(projection), index=projection.index)
-        future_mask = ~past_mask
-
-    # real balances for past rows
     projection = projection.merge(
-        banks_df[["date", "banks_total"]],
+        expenses,
         left_on="ds",
         right_on="date",
         how="left",
     )
-    projection["real_balance"] = projection["banks_total"]
-    projection = projection.drop(columns=["date", "banks_total"])
+    projection = projection.drop(columns=["date"], errors="ignore")
+    projection["expenses_total"] = pd.to_numeric(projection["expenses_total"], errors="coerce").fillna(0).round(2)
 
-    # future projected balances start from latest real balance
-    future_projection = projection[future_mask].copy()
+    projection = projection.merge(real_balances, on="ds", how="left")
+    projection["real_balance"] = pd.to_numeric(projection["real_balance"], errors="coerce")
+
+    projection["projected_sales"] = pd.to_numeric(projection["yhat"], errors="coerce").fillna(0).round(2)
+    projection["projected_sales_min"] = pd.to_numeric(projection["yhat_lower"], errors="coerce").fillna(0).round(2)
+    projection["projected_sales_max"] = pd.to_numeric(projection["yhat_upper"], errors="coerce").fillna(0).round(2)
+    projection["projected_expenses"] = projection["expenses_total"]
+
+    projection["projected_net_income"] = (projection["projected_sales"] - projection["projected_expenses"]).round(2)
+    projection["projected_net_income_min"] = (projection["projected_sales_min"] - projection["projected_expenses"]).round(2)
+    projection["projected_net_income_max"] = (projection["projected_sales_max"] - projection["projected_expenses"]).round(2)
+
+    if real_balances.empty:
+        projection["projected_bank_balance"] = pd.NA
+        projection["projected_bank_balance_min"] = pd.NA
+        projection["projected_bank_balance_max"] = pd.NA
+        return cashflow_history, projection[[*PROJECTION_COLUMNS, "real_balance"]].reset_index(drop=True)
+
+    last_real_date = real_balances["ds"].max()
+    latest_real_balance = float(
+        real_balances.loc[
+            real_balances["ds"] == last_real_date,
+            "real_balance",
+        ].iloc[-1]
+    )
+
+    has_real_balance_mask = projection["real_balance"].notna() & (projection["real_balance"] > 0)
+    future_mask = projection["ds"] > last_real_date
+
+    # Only rows that truly have bank data should show real/projected historical balance.
+    projection.loc[has_real_balance_mask, "projected_bank_balance"] = projection.loc[
+        has_real_balance_mask,
+        "real_balance",
+    ]
+    projection.loc[has_real_balance_mask, "projected_bank_balance_min"] = projection.loc[
+        has_real_balance_mask,
+        "real_balance",
+    ]
+    projection.loc[has_real_balance_mask, "projected_bank_balance_max"] = projection.loc[
+        has_real_balance_mask,
+        "real_balance",
+    ]
+
+    # Rows without real bank data must stay empty, not 0.
+    missing_real_history_mask = (projection["ds"] <= last_real_date) & ~has_real_balance_mask
+    projection.loc[missing_real_history_mask, "projected_bank_balance"] = pd.NA
+    projection.loc[missing_real_history_mask, "projected_bank_balance_min"] = pd.NA
+    projection.loc[missing_real_history_mask, "projected_bank_balance_max"] = pd.NA
+
+    # Future rows: project from the latest actual bank balance.
+    future_projection = projection.loc[future_mask].copy()
 
     if not future_projection.empty:
-        future_projection["projected_bank_balance"] = latest_real_balance + future_projection["projected_net_income"].cumsum()
-        future_projection["projected_bank_balance_min"] = latest_real_balance + future_projection["projected_net_income_min"].cumsum()
-        future_projection["projected_bank_balance_max"] = latest_real_balance + future_projection["projected_net_income_max"].cumsum()
+        projection.loc[future_mask, "projected_bank_balance"] = (
+            latest_real_balance + future_projection["projected_net_income"].cumsum()
+        ).round(2).values
+        projection.loc[future_mask, "projected_bank_balance_min"] = (
+            latest_real_balance + future_projection["projected_net_income_min"].cumsum()
+        ).round(2).values
+        projection.loc[future_mask, "projected_bank_balance_max"] = (
+            latest_real_balance + future_projection["projected_net_income_max"].cumsum()
+        ).round(2).values
 
-    past_projection = projection[past_mask].copy()
+    # Real values must only exist for historical rows. Future real balances should be empty, not 0.
+    projection.loc[future_mask, "real_balance"] = pd.NA
 
-    # for past fitted section, use real balance as the displayed projected line baseline
-    if not past_projection.empty:
-        past_projection["projected_bank_balance"] = past_projection["real_balance"]
-        past_projection["projected_bank_balance_min"] = past_projection["real_balance"]
-        past_projection["projected_bank_balance_max"] = past_projection["real_balance"]
+    for col in [
+        "projected_bank_balance",
+        "projected_bank_balance_min",
+        "projected_bank_balance_max",
+    ]:
+        projection[col] = pd.to_numeric(projection[col], errors="coerce").round(2)
 
-    # keep only last 4 historical rows
-    past_projection = past_projection.tail(4)
+    projection["real_balance"] = pd.to_numeric(projection["real_balance"], errors="coerce")
+    projection.loc[projection["real_balance"] <= 0, "real_balance"] = pd.NA
 
-    combined = pd.concat([past_projection, future_projection], ignore_index=True)
-
-    # ---- optional regrouping after daily logic ----
-    if freq != "daily" and not combined.empty:
-        combined = combined.copy()
-        combined["ds"] = pd.to_datetime(combined["ds"])
-
-        agg_map = {
-            "projected_sales": "sum",
-            "projected_sales_min": "sum",
-            "projected_sales_max": "sum",
-            "expenses_total": "sum",
-            "projected_net_income": "sum",
-            "projected_net_income_min": "sum",
-            "projected_net_income_max": "sum",
-            "projected_bank_balance": "last",
-            "projected_bank_balance_min": "last",
-            "projected_bank_balance_max": "last",
-            "real_balance": "last",
-        }
-
-        combined = (
-            combined.set_index("ds")
-            .resample(freq_code)
-            .agg(agg_map)
-            .reset_index()
-        )
-
-    return sales_history, combined
+    output_columns = [*PROJECTION_COLUMNS, "real_balance"]
+    return cashflow_history, projection[output_columns].reset_index(drop=True)

@@ -1,7 +1,7 @@
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from database import Base, engine
@@ -28,15 +28,19 @@ from services.forecast_run_service import (
     run_cashflow_projection,
 )
 from services.ml_update_service import update_ml_last_weeks
+from services.shopify_update_service import update_shopify_last_weeks
 from services.acquisition_expense_service import (
     upsert_acquisition_expense_row,
     get_latest_acquisition_expense_date,
     get_missing_week_end_dates_since_latest,
 )
 from services.roas_service import get_last_6_weeks_roas_by_mode
-from services.test_data_service import get_test_expenses_daily_totals
+from services.test_data_service import (
+    get_test_expenses_daily_totals,
+    get_test_banks_daily_totals,
+)
 
-st.set_page_config(page_title="Forecast Dashboard", layout="wide")
+st.set_page_config(page_title="ShinnySkin Dashboard", page_icon="✨", layout="wide")
 Base.metadata.create_all(bind=engine)
 
 COLUMN_LABELS = {
@@ -69,63 +73,205 @@ def inject_dashboard_theme():
     st.markdown(
         """
         <style>
-        .block-container {
-            padding-top: 3rem;
-            padding-bottom: 2rem;
-            max-width: 1280px;
+        :root {
+            --ss-pink: #ec5b8d;
+            --ss-pink-soft: #f7dce5;
+            --ss-pink-lighter: #fff3f7;
+            --ss-rose: #d97998;
+            --ss-black: #111111;
+            --ss-muted: #6f6470;
+            --ss-border: rgba(236, 91, 141, 0.20);
+            --ss-card: rgba(255,255,255,0.84);
         }
-
+        .stApp {
+            background: radial-gradient(circle at top left, rgba(236,91,141,0.24), transparent 32%),
+                        linear-gradient(180deg, #fff7fa 0%, #ffffff 48%, #fff3f7 100%);
+            color: var(--ss-black);
+        }
+        .block-container {padding-top: 1.4rem; padding-bottom: 2.2rem; max-width: 1320px;}
+        h1, h2, h3 {color: var(--ss-black); letter-spacing: -0.035em;}
+        .ss-hero {
+            position: relative; overflow: hidden; padding: 1.45rem 1.75rem; margin-bottom: 1.2rem;
+            border-radius: 26px;
+            background: linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(255,244,248,0.96) 58%, rgba(248,215,226,0.92) 100%);
+            border: 1px solid rgba(236,91,141,0.18);
+            box-shadow: 0 22px 54px rgba(236,91,141,0.13);
+        }
+        .ss-hero::after {content: "✦"; position: absolute; right: 30px; top: 18px; font-size: 3rem; color: rgba(17,17,17,0.08);}
+        .ss-brand-logo {
+            color: #111111; font-size: 2.15rem; line-height: 1; font-weight: 500;
+            letter-spacing: .18em; font-family: Arial, Helvetica, sans-serif;
+            margin-bottom: 1rem; text-transform: uppercase;
+        }
+        .ss-eyebrow {color: var(--ss-pink); font-size: .74rem; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; margin-bottom: .28rem;}
+        .ss-hero h1 {color: var(--ss-black); margin: 0 0 .25rem 0; font-weight: 800; font-size: 2.05rem;}
+        .ss-hero p {color: #4d4248; max-width: 840px; margin: 0; font-size: .98rem;}
         .metric-card {
-            background: linear-gradient(180deg, #131A2A 0%, #0E1422 100%);
-            border: 1px solid rgba(231,184,194,0.20);
-            border-radius: 18px;
-            padding: 18px 20px;
-            min-height: 112px;
+            padding: 1rem 1.05rem; border-radius: 22px; background: var(--ss-card);
+            border: 1px solid var(--ss-border); box-shadow: 0 16px 42px rgba(236,91,141,0.12); min-height: 112px;
         }
-
-        .metric-label {
-            color: #CFA7B0;
-            font-size: 0.9rem;
-            margin-bottom: 8px;
+        .metric-label {color: var(--ss-rose); font-size: .76rem; text-transform: uppercase; letter-spacing: .09em; font-weight: 800;}
+        .metric-value {color: var(--ss-black); font-size: 1.7rem; font-weight: 850; line-height: 1.1; margin-top: .18rem;}
+        .metric-sub {color: var(--ss-muted); font-size: .82rem; margin-top: .35rem;}
+        .section-card, .insight-box {
+            background: rgba(255,255,255,0.74); border: 1px solid var(--ss-border); border-radius: 24px;
+            padding: 1.1rem 1.2rem; box-shadow: 0 16px 42px rgba(236,91,141,0.10);
         }
-
-        .metric-value {
-            color: white;
-            font-size: 1.8rem;
-            font-weight: 700;
-            line-height: 1.1;
+        [data-testid="stMetric"] {
+            background: rgba(255,255,255,0.84); border: 1px solid var(--ss-border); border-radius: 22px;
+            padding: 1rem; box-shadow: 0 16px 42px rgba(236,91,141,0.10);
         }
-
-        .metric-sub {
-            color: #A8AAB3;
-            font-size: 0.82rem;
-            margin-top: 6px;
-        }
-
-        .section-card {
-            background: linear-gradient(180deg, #111727 0%, #0B1020 100%);
-            border: 1px solid rgba(231,184,194,0.15);
-            border-radius: 18px;
-            padding: 20px;
-        }
-
-        .insight-box {
-            background: rgba(231,184,194,0.10);
-            border: 1px solid rgba(231,184,194,0.25);
-            border-radius: 16px;
-            padding: 16px 18px;
-        }
-
+        [data-testid="stMetricLabel"] p {color: var(--ss-rose); font-weight: 800;}
+        [data-testid="stMetricValue"] {color: var(--ss-black);}
         div.stButton > button {
-            width: 100%;
-            border-radius: 12px;
-            height: 46px;
-            font-weight: 600;
+            width: 100%; border-radius: 16px; min-height: 46px; font-weight: 800;
+            border: 1px solid rgba(236,91,141,0.32);
+            background: linear-gradient(135deg, #ffffff 0%, #fff3f7 100%); color: var(--ss-black);
+            box-shadow: 0 10px 26px rgba(236,91,141,0.10);
+        }
+        div.stButton > button:hover {border-color: var(--ss-pink); color: var(--ss-pink); box-shadow: 0 14px 30px rgba(236,91,141,0.18);}
+        div[data-testid="stDataFrame"] {border-radius: 18px; overflow: hidden; border: 1px solid var(--ss-border);}
+        [data-testid="stPlotlyChart"] {
+            background: rgba(255,255,255,0.86); border: 1px solid rgba(236,91,141,0.16);
+            border-radius: 24px; padding: .55rem; box-shadow: 0 16px 42px rgba(236,91,141,0.08);
+        }
+        label, .stNumberInput label, .stSelectbox label, .stRadio label {color: #111111 !important; font-weight: 750 !important;}
+
+        /* Friendly hover navigation rail */
+        section[data-testid="stSidebar"] {
+            width: 82px !important;
+            min-width: 82px !important;
+            transition: width 220ms ease, min-width 220ms ease;
+            border-right: 1px solid rgba(236,91,141,0.18);
+            box-shadow: 12px 0 34px rgba(236,91,141,0.08);
+        }
+        section[data-testid="stSidebar"]:hover {
+            width: 290px !important;
+            min-width: 290px !important;
+        }
+        section[data-testid="stSidebar"] > div {
+            background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(255,243,247,0.98) 100%);
+            padding-top: 1.1rem;
+        }
+        section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+            padding: 1rem .85rem;
+        }
+        .ss-sidebar-rail {
+            display: flex; align-items: center; gap: .65rem;
+            padding: .8rem .55rem 1rem .55rem; margin-bottom: .45rem;
+            border-bottom: 1px solid rgba(236,91,141,0.14);
+        }
+        .ss-sidebar-logo-mark {
+            width: 42px; height: 42px; border-radius: 15px;
+            display: flex; align-items: center; justify-content: center;
+            color: #111111; background: #ffffff;
+            border: 1px solid rgba(236,91,141,0.20);
+            box-shadow: 0 10px 24px rgba(236,91,141,0.12);
+            font-weight: 900; letter-spacing: .05em; flex: 0 0 42px;
+        }
+        .ss-sidebar-copy {
+            opacity: 0; transform: translateX(-8px); white-space: nowrap; overflow: hidden;
+            transition: opacity 180ms ease, transform 180ms ease;
+        }
+        section[data-testid="stSidebar"]:hover .ss-sidebar-copy {
+            opacity: 1; transform: translateX(0);
+        }
+        .ss-sidebar-brand {
+            color: #111111; font-size: 1.02rem; font-weight: 650;
+            letter-spacing: .18em; line-height: 1;
+        }
+        .ss-sidebar-mode {color: #d97998; font-size: .72rem; font-weight: 800; margin-top: .24rem;}
+        .ss-sidebar-hint {
+            color: #8a7a82; font-size: .74rem; padding: .35rem .7rem .8rem .7rem;
+            opacity: 1;
+        }
+        section[data-testid="stSidebar"]:hover .ss-sidebar-hint {opacity: .9;}
+        section[data-testid="stSidebar"] div.stButton > button {
+            min-height: 44px; border-radius: 16px; justify-content: flex-start; padding-left: .75rem;
+            background: rgba(255,255,255,0.82); color: #111111;
+        }
+        section[data-testid="stSidebar"] div.stButton > button p {
+            white-space: nowrap; overflow: hidden; text-overflow: clip;
+        }
+        section[data-testid="stSidebar"]:not(:hover) div.stButton > button {
+            font-size: 0; padding-left: 0; padding-right: 0; justify-content: center;
+        }
+        section[data-testid="stSidebar"]:not(:hover) div.stButton > button p {
+            font-size: 0;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_metric_card(label: str, value: str, note: str = ""):
+    st.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value">{value}</div>
+            <div class="metric-sub">{note}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_hero(title: str, subtitle: str, eyebrow: str = "ShinnySkin"):
+    st.markdown(
+        f"""
+        <div class="ss-hero">
+            <div class="ss-brand-logo">SHINNYSKIN</div>
+            <div class="ss-eyebrow">{eyebrow}</div>
+            <h1>{title}</h1>
+            <p>{subtitle}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def apply_shinny_plot_layout(fig: go.Figure, title: str = "", height: int = 400, yaxis_title: str = "") -> go.Figure:
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=20, color="#111111", family="Arial"), x=0.02),
+        template="plotly_white",
+        height=height,
+        margin=dict(l=48, r=28, t=64, b=58),
+        paper_bgcolor="rgba(255,255,255,0.96)",
+        plot_bgcolor="#FFFFFF",
+        font=dict(color="#111111", size=13, family="Arial"),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(color="#111111", size=12),
+            bgcolor="rgba(255,255,255,0.72)",
+        ),
+        hoverlabel=dict(bgcolor="#111111", font_size=12, font_color="#FFFFFF"),
+        xaxis_title="",
+        yaxis_title=yaxis_title,
+        legend_title="",
+    )
+    fig.update_xaxes(
+        showgrid=True,
+        gridcolor="rgba(17,17,17,0.08)",
+        zeroline=False,
+        linecolor="rgba(17,17,17,0.25)",
+        tickfont=dict(color="#111111", size=12),
+        title_font=dict(color="#111111", size=13),
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridcolor="rgba(17,17,17,0.08)",
+        zeroline=False,
+        linecolor="rgba(17,17,17,0.25)",
+        tickfont=dict(color="#111111", size=12),
+        title_font=dict(color="#111111", size=13),
+    )
+    return fig
 
 
 def render_upload_section(title: str, uploader_key: str, prepare_func, upsert_func, button_label: str):
@@ -195,7 +341,7 @@ def render_forecast_band_chart(
             mode="lines",
             line=dict(width=0),
             fill="tonexty",
-            fillcolor="rgba(231,184,194,0.18)",
+            fillcolor="rgba(236,91,141,0.18)",
             name="Range",
             hoverinfo="skip",
         )
@@ -207,7 +353,7 @@ def render_forecast_band_chart(
             y=chart_df[y_col],
             mode="lines",
             name="Forecast",
-            line=dict(color="#E7B8C2", width=3),
+            line=dict(color="#EC5B8D", width=3),
         )
     )
 
@@ -220,21 +366,11 @@ def render_forecast_band_chart(
                     y=real_df[real_col],
                     mode="markers",
                     name="Real",
-                    marker=dict(size=8, color="white"),
+                    marker=dict(size=9, color="#111111", line=dict(color="#EC5B8D", width=2)),
                 )
             )
 
-    fig.update_layout(
-        title=title,
-        template="plotly_dark",
-        height=420,
-        margin=dict(l=20, r=20, t=50, b=20),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis_title="",
-        yaxis_title="",
-        legend_title="",
-    )
+    apply_shinny_plot_layout(fig, title=title, height=420)
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -277,12 +413,46 @@ def render_ml_update_section(section_key: str):
             st.error(f"Error updating Mercado Libre data: {e}")
 
 
+def render_shopify_update_section(section_key: str):
+    st.markdown("### Shopify Update Database")
+    st.caption("Only updates Shopify data for marketplace: shopify. CSV upload remains available for all other sources.")
+
+    weeks = st.slider(
+        "Weeks to update",
+        min_value=1,
+        max_value=52,
+        value=4,
+        step=1,
+        key=f"{section_key}_weeks_slider",
+    )
+
+    if st.button("Update Shopify Data", key=f"{section_key}_shopify_update_button"):
+        try:
+            summary = update_shopify_last_weeks(weeks)
+            st.success("Shopify update completed successfully.")
+            st.write(f"Date range updated: **{summary['start_date']}** to **{summary['end_date']}**")
+
+            for table in ["units", "sales"]:
+                st.write(f"{table.title()} rows processed: **{summary[f'{table}_rows']}**")
+                st.write(
+                    f"{table.title()} inserted: **{summary[f'{table}_inserted']}**, "
+                    f"updated: **{summary[f'{table}_updated']}**"
+                )
+
+        except Exception as e:
+            st.error(f"Error updating Shopify data: {e}")
+
+
 def render_update_data():
     inject_dashboard_theme()
     st.subheader("Update Data")
 
-    st.markdown("### Mercado Libre")
-    render_ml_update_section("update_data")
+    st.markdown("## Mercado Libre")
+    render_ml_update_section("update_data_ml")
+
+    st.markdown("---")
+    st.markdown("## Shopify")
+    render_shopify_update_section("update_data_shopify")
 
     st.markdown("---")
     render_amazon_upload_section()
@@ -473,10 +643,18 @@ def _render_summary_metric_cards(
     cashflow_display: pd.DataFrame,
     upcoming_expenses: pd.DataFrame,
 ):
-    last_sales_row = _latest_completed_row(sales_history.rename(columns={"ds": "date"}))
-    last_cashflow_row = _latest_completed_row(cashflow_history)
+    sales_hist = sales_history.rename(columns={"ds": "date"}).copy() if sales_history is not None else pd.DataFrame()
+    cash_hist = cashflow_history.copy() if cashflow_history is not None else pd.DataFrame()
 
-    last_week_sales = float(last_sales_row.get("y", 0) or 0) if last_sales_row is not None else 0
+    last_week_sales = 0.0
+    if not sales_hist.empty and {"date", "y"}.issubset(sales_hist.columns):
+        sales_hist["date"] = pd.to_datetime(sales_hist["date"])
+        sales_hist["y"] = pd.to_numeric(sales_hist["y"], errors="coerce").fillna(0)
+        last_sales_date = sales_hist["date"].max()
+        last_sales_start = last_sales_date - pd.Timedelta(days=6)
+        last_week_sales = float(sales_hist.loc[(sales_hist["date"] >= last_sales_start) & (sales_hist["date"] <= last_sales_date), "y"].sum())
+
+    last_cashflow_row = _latest_completed_row(cash_hist)
     next_week_sales_forecast = _next_forecast_value(sales_display)
     last_week_balance = float(last_cashflow_row.get("banks_total", 0) or 0) if last_cashflow_row is not None else 0
     next_projected_balance = _next_forecast_value(cashflow_display)
@@ -484,13 +662,13 @@ def _render_summary_metric_cards(
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Last week sales", f"${last_week_sales:,.0f}")
+        render_metric_card("Last 7 days sales", f"${last_week_sales:,.0f}", "Latest 7 saved days")
     with col2:
-        st.metric("Next week forecasted sales", f"${next_week_sales_forecast:,.0f}")
+        render_metric_card("Next forecasted span sales", f"${next_week_sales_forecast:,.0f}", "First forecasted period")
     with col3:
-        st.metric("Last week real balance", f"${last_week_balance:,.0f}")
+        render_metric_card("Latest real balance", f"${last_week_balance:,.0f}", "Latest saved bank balance")
     with col4:
-        st.metric("Next projected balance", f"${next_projected_balance:,.0f}", help=f"All upcoming saved expenses: ${future_expenses_total:,.0f}")
+        render_metric_card("Next projected balance", f"${next_projected_balance:,.0f}", f"Upcoming expenses: ${future_expenses_total:,.0f}")
 
 
 def _last_saved_week_slice(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Timestamp | None, pd.Timestamp | None]:
@@ -513,22 +691,16 @@ def _render_bar_chart(df: pd.DataFrame, x_col: str, y_col: str, title: str, valu
         go.Bar(
             x=df[x_col],
             y=df[y_col],
+            marker_color="#EC5B8D",
             text=df[y_col],
             texttemplate=f"{value_prefix}%{{text:,.0f}}",
             textposition="outside",
+            textfont=dict(color="#111111", size=12),
         )
     )
-    fig.update_layout(
-        title=title,
-        template="plotly_dark",
-        height=380,
-        margin=dict(l=20, r=20, t=50, b=60),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis_title="",
-        yaxis_title="",
-        showlegend=False,
-    )
+    apply_shinny_plot_layout(fig, title=title, height=390)
+    fig.update_layout(showlegend=False, uniformtext_minsize=10, uniformtext_mode="hide")
+    fig.update_xaxes(tickangle=-25)
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -547,11 +719,11 @@ def _render_roas_chart(mode: str):
     latest = chart_df.iloc[-1]
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Latest ROAS", f"{latest['roas']:.2f}x")
+        render_metric_card("Latest ROAS", f"{latest['roas']:.2f}x", "Last saved week")
     with col2:
-        st.metric("Latest sales", f"${float(latest.get('sales_total', 0) or 0):,.0f}")
+        render_metric_card("Latest sales", f"${float(latest.get('sales_total', 0) or 0):,.0f}", "ROAS sales base")
     with col3:
-        st.metric("Latest acquisition expense", f"${float(latest.get('acquisition_expense_total', 0) or 0):,.0f}")
+        render_metric_card("Latest acquisition expense", f"${float(latest.get('acquisition_expense_total', 0) or 0):,.0f}", "Marketing investment")
 
     fig = go.Figure()
     fig.add_trace(
@@ -562,21 +734,12 @@ def _render_roas_chart(mode: str):
             text=chart_df["roas"].round(2),
             textposition="top center",
             name="ROAS",
-            line=dict(color="#E7B8C2", width=3),
+            line=dict(color="#EC5B8D", width=3),
             marker=dict(size=8),
         )
     )
-    fig.update_layout(
-        title="ROAS - Last 6 Saved Weeks",
-        template="plotly_dark",
-        height=380,
-        margin=dict(l=20, r=20, t=50, b=40),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis_title="",
-        yaxis_title="ROAS",
-        legend_title="",
-    )
+    fig.update_traces(textfont=dict(color="#111111", size=12))
+    apply_shinny_plot_layout(fig, title="ROAS - Last 6 Saved Weeks", height=390, yaxis_title="ROAS")
     st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("Show ROAS table"):
@@ -642,46 +805,382 @@ def _render_summary_kpis(mode: str):
 
     st.markdown("---")
     _render_roas_chart(mode)
+
+def _time_span_days(group_by: str, custom_days: int) -> int:
+    if group_by == "Day":
+        return 1
+    if group_by == "Week":
+        return 7
+    if group_by == "Month":
+        return 31
+    return max(int(custom_days or 1), 1)
+
+
+def _default_summary_start_date(last_date: pd.Timestamp | None, group_by: str, custom_days: int, past_spans: int = 4) -> date:
+    base = pd.Timestamp(date.today()) if last_date is None or pd.isna(last_date) else pd.to_datetime(last_date)
+    days = _time_span_days(group_by, custom_days) * past_spans
+    return (base - pd.Timedelta(days=days - 1)).date()
+
+
+def _build_group_key(df: pd.DataFrame, date_col: str, group_by: str, custom_days: int, anchor_date: pd.Timestamp) -> pd.Series:
+    dates = pd.to_datetime(df[date_col])
+    if group_by == "Day":
+        return dates.dt.floor("D")
+    if group_by == "Week":
+        return dates.dt.to_period("W-SUN").dt.start_time
+    if group_by == "Month":
+        return dates.dt.to_period("M").dt.start_time
+
+    days = max(int(custom_days or 1), 1)
+    anchor = pd.to_datetime(anchor_date).normalize()
+    bucket_number = ((dates.dt.normalize() - anchor).dt.days // days).clip(lower=0)
+    return anchor + pd.to_timedelta(bucket_number * days, unit="D")
+
+
+def _aggregate_forecast_display(
+    display_df: pd.DataFrame,
+    group_by: str,
+    custom_days: int,
+    start_date: date,
+    forecasted_periods: int,
+    aggregation: str,
+) -> pd.DataFrame:
+    empty = pd.DataFrame(columns=["date", "forecast", "min", "max", "real"])
+    if display_df is None or display_df.empty:
+        return empty
+
+    out = display_df.copy()
+    out["date"] = pd.to_datetime(out["date"])
+    for col in ["forecast", "min", "max", "real"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    start_ts = pd.Timestamp(start_date).normalize()
+    real_dates = out.loc[out["real"].notna(), "date"]
+    last_real_date = real_dates.max() if not real_dates.empty else out["date"].min()
+
+    past = out[(out["date"] >= start_ts) & (out["date"] <= last_real_date)].copy()
+    future = out[out["date"] > last_real_date].copy()
+
+    def aggregate(part: pd.DataFrame, keep_first_n: int | None = None) -> pd.DataFrame:
+        if part.empty:
+            return empty.copy()
+        part = part.copy()
+        part["period_start"] = _build_group_key(part, "date", group_by, custom_days, start_ts)
+        if aggregation == "last":
+            grouped = (
+                part.sort_values("date")
+                .groupby("period_start", as_index=False)
+                .agg({"forecast": "last", "min": "last", "max": "last", "real": "last"})
+                .rename(columns={"period_start": "date"})
+            )
+        else:
+            grouped = (
+                part.groupby("period_start", as_index=False)
+                .agg({"forecast": "sum", "min": "sum", "max": "sum", "real": "sum"})
+                .rename(columns={"period_start": "date"})
+            )
+            if part["real"].isna().all():
+                grouped["real"] = pd.NA
+
+        grouped = grouped.sort_values("date").reset_index(drop=True)
+        if keep_first_n is not None:
+            grouped = grouped.head(keep_first_n)
+        return grouped[["date", "forecast", "min", "max", "real"]]
+
+    past_grouped = aggregate(past)
+    future_grouped = aggregate(future, keep_first_n=forecasted_periods)
+    return pd.concat([past_grouped, future_grouped], ignore_index=True)
+
+
+def _forecast_days_needed(group_by: str, custom_days: int, forecasted_periods: int) -> int:
+    return max(_time_span_days(group_by, custom_days) * int(forecasted_periods), int(forecasted_periods))
+
+
+PRODUCT_HEATMAP_COLORS = [
+    "#EC5B8D", "#111111", "#7A4E9E", "#00A8A8", "#F59E0B",
+    "#2563EB", "#10B981", "#EF4444", "#8B5CF6", "#14B8A6",
+    "#F97316", "#64748B", "#DB2777", "#22C55E", "#06B6D4",
+    "#A855F7", "#EAB308", "#0F766E", "#BE123C", "#475569",
+]
+
+
+def _product_color_map() -> dict[str, str]:
+    return {
+        product: PRODUCT_HEATMAP_COLORS[index % len(PRODUCT_HEATMAP_COLORS)]
+        for index, product in enumerate(PRODUCT_COLUMNS)
+    }
+
+
+def _pretty_product_name(product: str) -> str:
+    return str(product).replace("_", " ").strip().title()
+
+
+def _render_sales_heatmap(grouped_sales: pd.DataFrame):
+    if grouped_sales.empty:
+        st.warning("No sales data available for the selected filters.")
+        return
+
+    color_map = _product_color_map()
+    market_totals = grouped_sales.groupby("mkp_name", as_index=False)["sales"].sum()
+
+    labels = ["Total Sales"]
+    ids = ["total"]
+    parents = [""]
+    values = [float(market_totals["sales"].sum())]
+    colors = ["#FFF3F7"]
+    customdata = [["All markets", "All products"]]
+
+    for _, market_row in market_totals.sort_values("sales", ascending=False).iterrows():
+        market = str(market_row["mkp_name"]).upper()
+        market_id = f"market::{market}"
+        labels.append(market)
+        ids.append(market_id)
+        parents.append("total")
+        values.append(float(market_row["sales"]))
+        colors.append("#F7DCE5")
+        customdata.append([market, "All products"])
+
+        market_products = grouped_sales[grouped_sales["mkp_name"].str.upper() == market].sort_values("sales", ascending=False)
+        for _, product_row in market_products.iterrows():
+            product = str(product_row["product"])
+            product_label = _pretty_product_name(product)
+            labels.append(product_label)
+            ids.append(f"{market_id}::{product}")
+            parents.append(market_id)
+            values.append(float(product_row["sales"]))
+            colors.append(color_map.get(product, "#EC5B8D"))
+            customdata.append([market, product_label])
+
+    fig = go.Figure(
+        go.Treemap(
+            labels=labels,
+            ids=ids,
+            parents=parents,
+            values=values,
+            branchvalues="total",
+            marker=dict(colors=colors, line=dict(color="white", width=2)),
+            customdata=customdata,
+            texttemplate="<b>%{label}</b><br>$%{value:,.0f}",
+            hovertemplate=(
+                "<b>%{label}</b><br>"
+                "Market: %{customdata[0]}<br>"
+                "Product: %{customdata[1]}<br>"
+                "Sales: $%{value:,.2f}<extra></extra>"
+            ),
+            tiling=dict(packing="squarify"),
+        )
+    )
+    apply_shinny_plot_layout(fig, title="Sales Heat Map by Market and Product", height=650)
+    fig.update_layout(margin=dict(l=10, r=10, t=64, b=10))
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_detailed_sales():
+    inject_dashboard_theme()
+    st.subheader("Detailed Sales")
+    st.caption("Heat map grouped by market. Each product keeps its own color across all markets.")
+
+    mode = st.session_state.get("app_mode", "shinny")
+    sales_df = _get_sales_history_by_mode(mode)
+
+    if sales_df.empty:
+        st.warning("No sales data available.")
+        return
+
+    sales_df = sales_df.copy()
+    sales_df["date"] = pd.to_datetime(sales_df["date"]).dt.normalize()
+    min_date = sales_df["date"].min().date()
+    max_date = sales_df["date"].max().date()
+    default_start = max(min_date, (pd.Timestamp(max_date) - pd.Timedelta(days=29)).date())
+
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        start_date = st.date_input("Start date", value=default_start, min_value=min_date, max_value=max_date, key="detailed_sales_start")
+    with col2:
+        end_date = st.date_input("End date", value=max_date, min_value=min_date, max_value=max_date, key="detailed_sales_end")
+    with col3:
+        market_options = sorted(sales_df["mkp_name"].dropna().unique().tolist())
+        selected_markets = st.multiselect(
+            "Markets",
+            options=market_options,
+            default=market_options,
+            key="detailed_sales_markets",
+        )
+
+    if pd.Timestamp(start_date) > pd.Timestamp(end_date):
+        st.error("Start date cannot be after end date.")
+        return
+
+    filtered = sales_df[
+        (sales_df["date"] >= pd.Timestamp(start_date))
+        & (sales_df["date"] <= pd.Timestamp(end_date))
+    ].copy()
+    if selected_markets:
+        filtered = filtered[filtered["mkp_name"].isin(selected_markets)].copy()
+
+    melted = filtered.melt(
+        id_vars=["date", "mkp_name"],
+        value_vars=PRODUCT_COLUMNS,
+        var_name="product",
+        value_name="sales",
+    )
+    melted["sales"] = pd.to_numeric(melted["sales"], errors="coerce").fillna(0)
+    melted = melted[melted["sales"] > 0].copy()
+
+    if melted.empty:
+        st.warning("No positive sales found for this selection.")
+        return
+
+    grouped_sales = (
+        melted.groupby(["mkp_name", "product"], as_index=False)["sales"]
+        .sum()
+        .sort_values("sales", ascending=False)
+    )
+
+    total_sales = float(grouped_sales["sales"].sum())
+    top_market = grouped_sales.groupby("mkp_name")["sales"].sum().sort_values(ascending=False)
+    top_product = grouped_sales.groupby("product")["sales"].sum().sort_values(ascending=False)
+
+    metric_col1, metric_col2, metric_col3 = st.columns(3)
+    with metric_col1:
+        render_metric_card("Total sales", f"${total_sales:,.0f}", f"{start_date} to {end_date}")
+    with metric_col2:
+        render_metric_card("Top market", str(top_market.index[0]).upper(), f"${float(top_market.iloc[0]):,.0f}")
+    with metric_col3:
+        render_metric_card("Top product", _pretty_product_name(str(top_product.index[0])), f"${float(top_product.iloc[0]):,.0f}")
+
+    _render_sales_heatmap(grouped_sales)
+
+    st.markdown("### Product color legend")
+    legend = (
+        grouped_sales.groupby("product", as_index=False)["sales"]
+        .sum()
+        .sort_values("sales", ascending=False)
+    )
+    color_map = _product_color_map()
+    legend_html = "".join(
+        f'''<span style="display:inline-flex;align-items:center;gap:6px;margin:0 10px 10px 0;padding:7px 10px;border-radius:999px;background:white;border:1px solid rgba(236,91,141,.20);">
+              <span style="width:12px;height:12px;border-radius:50%;background:{color_map.get(row['product'], '#EC5B8D')};display:inline-block;"></span>
+              <span style="font-size:.82rem;color:#111;font-weight:700;">{_pretty_product_name(row['product'])}</span>
+            </span>'''
+        for _, row in legend.iterrows()
+    )
+    st.markdown(legend_html, unsafe_allow_html=True)
+
+    with st.expander("Show detailed sales table"):
+        table = grouped_sales.copy()
+        table["product"] = table["product"].map(_pretty_product_name)
+        table = table.rename(columns={"mkp_name": "Market", "product": "Product", "sales": "Sales"})
+        st.dataframe(table.style.format({"Sales": "${:,.2f}"}), use_container_width=True)
+
 def render_summary_dashboard():
     inject_dashboard_theme()
     mode = st.session_state.get("app_mode", "shinny")
 
-    st.subheader("Summary Dashboard")
-    st.caption("Weekly view: past real performance, forecasted sales, projected cash flow, and all upcoming saved expenses.")
+    # Keep the working weekly forecast behavior from main.py for the default weekly view.
+    # main1 was forcing daily forecasts and then grouping them, which distorted sales
+    # and made cashflow start too high in some datasets.
+    try:
+        raw_sales_history, _ = run_sales_forecast(
+            periods=1,
+            freq="daily",
+            mode=mode,
+            past_periods_to_show=1,
+        )
+    except Exception:
+        raw_sales_history = pd.DataFrame(columns=["ds", "y"])
 
-    col1, col2 = st.columns(2)
+    last_sales_date = None
+    if not raw_sales_history.empty and "ds" in raw_sales_history.columns:
+        last_sales_date = pd.to_datetime(raw_sales_history["ds"]).max()
+
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        past_weeks = st.number_input(
-            "Past weeks",
-            min_value=1,
-            max_value=52,
-            value=4,
-            step=1,
-            key="summary_past_weeks",
+        group_by = st.selectbox(
+            "Group results by",
+            options=["Day", "Week", "Month", "Custom days"],
+            index=1,
+            key="summary_group_by",
         )
     with col2:
+        if group_by == "Custom days":
+            custom_days = st.number_input(
+                "Days per group",
+                min_value=1,
+                max_value=365,
+                value=7,
+                step=1,
+                key="summary_custom_days",
+            )
+        else:
+            custom_days = _time_span_days(group_by, 7)
+            st.number_input(
+                "Days per group",
+                min_value=1,
+                max_value=365,
+                value=custom_days,
+                step=1,
+                key="summary_custom_days_disabled",
+                disabled=True,
+            )
+    with col3:
+        default_start = _default_summary_start_date(
+            last_sales_date,
+            group_by,
+            int(custom_days),
+            past_spans=4,
+        )
+        start_date = st.date_input(
+            "Start date",
+            value=default_start,
+            key=f"summary_start_date_{group_by}_{int(custom_days)}",
+        )
+    with col4:
         forecasted_period = st.number_input(
             "Forecasted period",
             min_value=1,
             max_value=52,
             value=4,
             step=1,
+            help="Number of future grouped periods to show. Example: 4 weeks, 4 months, or 4 custom spans.",
             key="summary_forecasted_period",
         )
 
+    start_ts = pd.Timestamp(start_date).normalize()
+    last_ts = pd.Timestamp(date.today()).normalize() if last_sales_date is None or pd.isna(last_sales_date) else pd.to_datetime(last_sales_date).normalize()
+    selected_past_days = max((last_ts - start_ts).days + 1, _time_span_days(group_by, int(custom_days)) * 4)
+
     try:
-        sales_history, sales_forecast = run_sales_forecast(
-            periods=forecasted_period,
-            freq="weekly",
-            mode=mode,
-            past_periods_to_show=past_weeks,
-        )
-        cashflow_history, cashflow_projection = run_cashflow_projection(
-            periods=forecasted_period,
-            freq="weekly",
-            mode=mode,
-            past_periods_to_show=past_weeks,
-        )
+        if group_by == "Week":
+            past_periods_to_show = max(1, int((selected_past_days + 6) // 7))
+            sales_history, sales_forecast = run_sales_forecast(
+                periods=int(forecasted_period),
+                freq="weekly",
+                mode=mode,
+                past_periods_to_show=past_periods_to_show,
+            )
+            cashflow_history, cashflow_projection = run_cashflow_projection(
+                periods=int(forecasted_period),
+                freq="weekly",
+                mode=mode,
+                past_periods_to_show=past_periods_to_show,
+            )
+        else:
+            daily_forecast_periods = _forecast_days_needed(group_by, int(custom_days), int(forecasted_period))
+            sales_history, sales_forecast = run_sales_forecast(
+                periods=daily_forecast_periods,
+                freq="daily",
+                mode=mode,
+                past_periods_to_show=int(selected_past_days),
+            )
+            cashflow_history, cashflow_projection = run_cashflow_projection(
+                periods=daily_forecast_periods,
+                freq="daily",
+                mode=mode,
+                past_periods_to_show=int(selected_past_days),
+            )
+
         upcoming_expenses = _get_upcoming_expenses_by_mode(mode)
     except Exception as e:
         st.error(f"Error loading summary dashboard: {e}")
@@ -705,6 +1204,31 @@ def render_summary_dashboard():
             }
         )[["date", "forecast", "min", "max", "real"]]
 
+    if group_by == "Week":
+        if not sales_display.empty:
+            sales_display["date"] = pd.to_datetime(sales_display["date"])
+            sales_display = sales_display[sales_display["date"] >= start_ts].reset_index(drop=True)
+        if not cashflow_display.empty:
+            cashflow_display["date"] = pd.to_datetime(cashflow_display["date"])
+            cashflow_display = cashflow_display[cashflow_display["date"] >= start_ts].reset_index(drop=True)
+    else:
+        sales_display = _aggregate_forecast_display(
+            sales_display,
+            group_by=group_by,
+            custom_days=int(custom_days),
+            start_date=start_date,
+            forecasted_periods=int(forecasted_period),
+            aggregation="sum",
+        )
+        cashflow_display = _aggregate_forecast_display(
+            cashflow_display,
+            group_by=group_by,
+            custom_days=int(custom_days),
+            start_date=start_date,
+            forecasted_periods=int(forecasted_period),
+            aggregation="last",
+        )
+
     _render_summary_metric_cards(
         sales_history=sales_history,
         sales_display=sales_display,
@@ -717,6 +1241,10 @@ def render_summary_dashboard():
 
     st.markdown("---")
     st.markdown("### Sales: Past Real vs Forecast")
+    st.caption(
+        f"Showing data from **{pd.Timestamp(start_date).date()}**. "
+        f"Future view shows the next **{int(forecasted_period)}** {group_by.lower()} period(s)."
+    )
     if sales_display.empty:
         st.warning("No sales forecast available.")
     else:
@@ -725,6 +1253,10 @@ def render_summary_dashboard():
             render_pretty_table(sales_display)
 
     st.markdown("### Cash Flow: Real Balances vs Projection")
+    if group_by == "Week":
+        st.caption("Using the same native weekly cashflow logic as the working main.py file.")
+    else:
+        st.caption("Cash flow is calculated daily, then grouped by taking the latest balance inside each selected period.")
     if cashflow_display.empty:
         st.warning("No cash flow projection available.")
     else:
@@ -1029,8 +1561,8 @@ def render_amazon_upload_section():
 
 
 def render_mode_selector():
-    st.title("Select Environment")
-    st.caption("Choose the environment you want to access.")
+    inject_dashboard_theme()
+    render_hero("Forecast Dashboard", "Choose the environment you want to access.", "ShinnySkin Analytics")
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Shinny Skin", key="select_shinny", use_container_width=True):
@@ -1043,8 +1575,8 @@ def render_mode_selector():
 
 
 def render_shinny_login():
-    st.title("Shinny Skin Access")
-    st.caption("Enter password to access the private environment.")
+    inject_dashboard_theme()
+    render_hero("ShinnySkin Access", "Enter password to access the private environment.", "Private Dashboard")
     password = st.text_input("Password", type="password", key="shinny_password_input")
     col1, col2 = st.columns([1, 1])
 
@@ -1073,52 +1605,59 @@ def _reset_navigation():
     st.session_state.selected_option = None
 
 
-def render_home():
-    st.markdown(
-        """
-        <style>
-        .block-container {padding-top: 4rem; padding-bottom: 2rem; max-width: 1200px;}
-        div.stButton > button {width: 100%; border-radius: 10px; height: 48px; font-weight: 600;}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+def render_left_panel():
+    inject_dashboard_theme()
     mode = st.session_state.get("app_mode")
-    st.title("Forecast Dashboard")
-    st.caption("Update your operational data and monitor forecasts, cash flow, and ROAS.")
-    render_mode_banner()
+    mode_label = "Shinny Skin" if mode == "shinny" else "Test"
 
-    col_back, _ = st.columns([1, 4])
-    with col_back:
-        if st.button("Back to selector", use_container_width=True):
+    with st.sidebar:
+        st.markdown(
+            f"""
+            <div class="ss-sidebar-rail">
+                <div class="ss-sidebar-logo-mark">SS</div>
+                <div class="ss-sidebar-copy">
+                    <div class="ss-sidebar-brand">SHINNYSKIN</div>
+                    <div class="ss-sidebar-mode">{mode_label} dashboard</div>
+                </div>
+            </div>
+            <div class="ss-sidebar-hint">Hover to expand navigation</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if st.button("← Back to selector", key="sidebar_back_to_selector", use_container_width=True):
             _reset_navigation()
             st.rerun()
 
-    st.markdown("### Navigation")
-    nav_options = [
-        ("Summary Dashboard", "summary_dashboard", True),
-        ("Update Data", "update_data", mode == "shinny"),
-        ("Sales Forecast", "sales_forecast", True),
-        ("Cash Flow", "cash_flow", True),
-        ("ROAS", "roas", True),
-    ]
-    for col, (label, option, enabled) in zip(st.columns(5), nav_options):
-        with col:
-            if enabled and st.button(label, use_container_width=True):
+        st.markdown("---")
+
+        nav_options = [
+            ("✦ Summary Dashboard", "summary_dashboard", True),
+            ("▦ Detailed Sales", "detailed_sales", True),
+            ("↥ Update Data", "update_data", mode == "shinny"),
+        ]
+        valid_options = {option for _, option, enabled in nav_options if enabled}
+        if st.session_state.get("selected_option") not in valid_options:
+            st.session_state.selected_option = "summary_dashboard"
+
+        for label, option, enabled in nav_options:
+            if not enabled:
+                continue
+            selected = st.session_state.get("selected_option") == option
+            button_label = f"● {label}" if selected else label
+            if st.button(button_label, key=f"sidebar_nav_{option}", use_container_width=True):
                 st.session_state.selected_option = option
+                st.rerun()
 
-    st.markdown("---")
-    if st.session_state.get("selected_option") is None:
-        st.session_state.selected_option = "summary_dashboard"
 
+def render_home():
+    render_left_panel()
 
 def route_page():
     routes = {
         "summary_dashboard": render_summary_dashboard,
-        "sales_forecast": render_sales_forecast,
-        "cash_flow": render_cashflow,
+        "detailed_sales": render_detailed_sales,
         "update_data": render_update_data,
-        "roas": render_roas,
     }
     route = routes.get(st.session_state.get("selected_option"))
     if route:

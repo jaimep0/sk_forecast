@@ -136,24 +136,37 @@ def get_test_cashflow_history(freq: str = "daily") -> pd.DataFrame:
 
     df = pd.merge(sales_df, expenses_df, on="date", how="outer")
     df = pd.merge(df, banks_df, on="date", how="outer")
-    df = df.sort_values("date").reset_index(drop=True)
+
+    if df.empty:
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "sales_total",
+                "expenses_total",
+                "banks_total",
+                "net_income",
+            ]
+        )
+
+    df["date"] = pd.to_datetime(df["date"])
 
     for col in ["sales_total", "expenses_total", "banks_total"]:
         if col not in df.columns:
-            df[col] = 0
+            df[col] = pd.NA
 
     df["sales_total"] = pd.to_numeric(df["sales_total"], errors="coerce").fillna(0)
     df["expenses_total"] = pd.to_numeric(df["expenses_total"], errors="coerce").fillna(0)
-    df["banks_total"] = pd.to_numeric(df["banks_total"], errors="coerce").fillna(0)
+    df["banks_total"] = pd.to_numeric(df["banks_total"], errors="coerce")
 
     rule_map = {
         "daily": "D",
         "weekly": "W-SUN",
         "monthly": "M",
     }
+
     rule = rule_map[freq]
 
-    grouped = (
+    flow = (
         df.set_index("date")[["sales_total", "expenses_total"]]
         .resample(rule)
         .sum()
@@ -167,8 +180,11 @@ def get_test_cashflow_history(freq: str = "daily") -> pd.DataFrame:
         .reset_index()
     )
 
-    out = grouped.merge(banks, on="date", how="left")
-    out["banks_total"] = out["banks_total"].ffill().fillna(0)
+    out = flow.merge(banks, on="date", how="left")
+
+    # Important: ffill real bank balances, but do not invent zeros.
+    out["banks_total"] = pd.to_numeric(out["banks_total"], errors="coerce").ffill()
+
     out["net_income"] = out["sales_total"] - out["expenses_total"]
 
     return out.sort_values("date").reset_index(drop=True)
