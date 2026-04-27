@@ -9,6 +9,7 @@ import re
 from database import Base, engine
 from settings import get_shinnyskin_password
 from services.amazon_upload_service import upload_amazon_files_to_db
+from services.liverpool_update_service import upload_liverpool_files_to_db
 from services.units_service import (
     PRODUCT_COLUMNS,
     get_units_history,
@@ -135,7 +136,18 @@ def inject_dashboard_theme():
             border: 1px solid rgba(236,91,141,0.12);
             border-left: 3px solid var(--ss-pink);
             box-shadow: 0 13px 30px rgba(15, 23, 42, 0.07);
-            min-height: 132px;
+            
+            height: 155px;
+            min-height: 155px;
+            max-height: 155px;
+
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+
+        }
+        .metric-delta {
+        min-height: 20px;
         }
         .metric-card::after {
             content: ""; position: absolute; inset: 0; pointer-events: none;
@@ -410,9 +422,9 @@ def inject_dashboard_theme():
         /* Dark business-style sidebar inspired by the reference dashboard */
         section[data-testid="stSidebar"],
         section[data-testid="stSidebar"]:hover {
-            width: 244px !important;
-            min-width: 244px !important;
-            max-width: 244px !important;
+            width: 200px !important;
+            min-width: 200px !important;
+            max-width: 200px !important;
             border-right: 1px solid rgba(255,255,255,0.08) !important;
             box-shadow: 14px 0 38px rgba(12,18,32,0.18) !important;
         }
@@ -538,7 +550,7 @@ def render_hero(title: str, subtitle: str, eyebrow: str = "E-commerce Business A
     )
 
 
-def apply_shinny_plot_layout(fig: go.Figure, title: str = "", height: int = 400, yaxis_title: str = "") -> go.Figure:
+def apply_shinny_plot_layout(fig: go.Figure, title: str = "", height: int = 360, yaxis_title: str = "") -> go.Figure:
     fig.update_layout(
         title=dict(text=title, font=dict(size=20, color="#111111", family="Arial"), x=0.02),
         template="plotly_white",
@@ -867,6 +879,7 @@ def render_update_data():
         st.markdown("### Marketplace file uploads")
         st.caption("Use this when the marketplace needs exported reports instead of a direct API update.")
         render_amazon_upload_section()
+        render_liverpool_upload_section()
 
     with banks_tab:
         st.markdown("### Bank balance updates")
@@ -1311,7 +1324,6 @@ def _render_bar_chart(df: pd.DataFrame, x_col: str, y_col: str, title: str, valu
 
 def _render_roas_chart(mode: str):
     roas_df = get_last_6_weeks_roas_by_mode(mode=mode)
-    st.markdown("#### ROAS")
 
     if roas_df.empty:
         st.warning("No ROAS data available.")
@@ -1322,13 +1334,6 @@ def _render_roas_chart(mode: str):
     chart_df["roas"] = pd.to_numeric(chart_df["roas"], errors="coerce").fillna(0)
 
     latest = chart_df.iloc[-1]
-    #col1, col2, col3 = st.columns(3)
-    #with col1:
-    #    render_metric_card("Latest ROAS", f"{latest['roas']:.2f}x", "Last saved week")
-    #with col2:
-    #    render_metric_card("Latest sales", f"${float(latest.get('sales_total', 0) or 0):,.0f}", "ROAS sales base")
-    #with col3:
-    #    render_metric_card("Latest acquisition expense", f"${float(latest.get('acquisition_expense_total', 0) or 0):,.0f}", "Marketing investment")
 
     fig = go.Figure()
     fig.add_trace(
@@ -1344,23 +1349,57 @@ def _render_roas_chart(mode: str):
         )
     )
     fig.update_traces(textfont=dict(color="#111111", size=12))
-    apply_shinny_plot_layout(fig, title="ROAS - Last 6 Saved Weeks", height=390, yaxis_title="ROAS")
+    apply_shinny_plot_layout(fig, title="ROAS - Last 6 Saved Weeks", height=360, yaxis_title="ROAS")
     st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("Show ROAS table"):
         render_pretty_table(chart_df[["date", "sales_total", "acquisition_expense_total", "roas"]], percent_cols=["roas"])
 
 
+def _render_last_week_sales_heatmap(mode: str):
+    sales_df = _get_sales_history_by_mode(mode)
+
+    if sales_df.empty:
+        st.warning("No sales data available for heatmap.")
+        return
+
+    last_week_sales, sales_week_start, sales_last_date = _last_saved_week_slice(sales_df)
+
+    if last_week_sales.empty:
+        st.warning("No last saved week sales available for heatmap.")
+        return
+
+    melted = last_week_sales.melt(
+        id_vars=["date", "mkp_name"],
+        value_vars=PRODUCT_COLUMNS,
+        var_name="product",
+        value_name="sales",
+    )
+
+    melted["sales"] = pd.to_numeric(melted["sales"], errors="coerce").fillna(0)
+    melted = melted[melted["sales"] > 0].copy()
+
+    if melted.empty:
+        st.info("No positive sales found for the last saved week.")
+        return
+
+    grouped_sales = (
+        melted.groupby(["mkp_name", "product"], as_index=False)["sales"]
+        .sum()
+        .sort_values("sales", ascending=False)
+    )
+
+    _render_sales_heatmap(grouped_sales, height=360)
+
+
 def _render_summary_kpis(mode: str):
     units_df = _get_units_history_by_mode(mode)
     sales_df = _get_sales_history_by_mode(mode)
 
-    #st.markdown("### KPI Snapshot")
-
+    st.markdown("---")
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("#### Units by product")
         last_week_units, week_start, last_date = _last_saved_week_slice(units_df)
 
         if last_week_units.empty:
@@ -1378,13 +1417,10 @@ def _render_summary_kpis(mode: str):
             if units_by_product.empty:
                 st.info("No unit movement in the last saved week.")
             else:
-                st.caption(f"Last saved week: {week_start.date()} to {last_date.date()}")
+                #st.caption(f"Last saved week: {week_start.date()} to {last_date.date()}")
                 _render_bar_chart(units_by_product, "product", "units", "Units by Product - Last Saved Week")
-                with st.expander("Show units by product table"):
-                    render_pretty_table(units_by_product, date_col="", decimals=0)
 
     with col2:
-        st.markdown("#### Income by marketplace")
         last_week_sales, sales_week_start, sales_last_date = _last_saved_week_slice(sales_df)
 
         if last_week_sales.empty:
@@ -1403,13 +1439,18 @@ def _render_summary_kpis(mode: str):
             if income_by_marketplace.empty:
                 st.info("No marketplace income in the last saved week.")
             else:
-                st.caption(f"Last saved week: {sales_week_start.date()} to {sales_last_date.date()}")
+                #st.caption(f"Last saved week: {sales_week_start.date()} to {sales_last_date.date()}")
                 _render_bar_chart(income_by_marketplace, "mkp_name", "income", "Income by Marketplace - Last Saved Week", value_prefix="$")
-                with st.expander("Show income by marketplace table"):
-                    render_pretty_table(income_by_marketplace, date_col="")
 
     st.markdown("---")
-    _render_roas_chart(mode)
+    col1, col2 = st.columns(2)
+
+    with col1:
+        _render_roas_chart(mode)
+
+    with col2:
+        _render_last_week_sales_heatmap(mode)
+
 
 def _time_span_days(group_by: str, custom_days: int) -> int:
     if group_by == "Day":
@@ -1521,7 +1562,7 @@ def _pretty_product_name(product: str) -> str:
     return str(product).replace("_", " ").strip().title()
 
 
-def _render_sales_heatmap(grouped_sales: pd.DataFrame):
+def _render_sales_heatmap(grouped_sales: pd.DataFrame, height: int = 650):
     if grouped_sales.empty:
         st.warning("No sales data available for the selected filters.")
         return
@@ -1576,7 +1617,7 @@ def _render_sales_heatmap(grouped_sales: pd.DataFrame):
             tiling=dict(packing="squarify"),
         )
     )
-    apply_shinny_plot_layout(fig, title="Sales Heat Map by Market and Product", height=650)
+    apply_shinny_plot_layout(fig, title="Sales Heat Map by Market and Product", height=height)
     fig.update_layout(margin=dict(l=10, r=10, t=64, b=10))
     st.plotly_chart(fig, use_container_width=True)
 
@@ -1768,31 +1809,35 @@ def render_summary_dashboard():
 
     _render_summary_kpis(mode)
 
-    st.markdown("---")
-    st.markdown("### Sales: Past Real vs Forecast")
-    st.caption(
-        f"Showing the last **{past_weeks_to_show}** completed Monday-Sunday weeks, "
-        f"plus the next **{forecasted_period}** forecast weeks. "
-        f"Latest completed week: **{week_start.date()} – {week_end.date()}**."
-    )
-    if sales_display.empty:
-        st.warning("No sales forecast available.")
-    else:
-        render_forecast_band_chart(sales_display, title="Sales Summary Forecast")
-        with st.expander("Show sales table"):
-            render_pretty_table(sales_display)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("---")
+    #    st.markdown("### Sales: Past Real vs Forecast")
+        st.caption(
+            f"Showing the last **{past_weeks_to_show}** completed Monday-Sunday weeks, "
+            f"plus the next **{forecasted_period}** forecast weeks. "
+            #f"Latest completed week: **{week_start.date()} – {week_end.date()}**."
+        )
+        if sales_display.empty:
+            st.warning("No sales forecast available.")
+        else:
+            render_forecast_band_chart(sales_display, title="Sales Summary and Forecast")
+            with st.expander("Show sales table"):
+                render_pretty_table(sales_display)
 
-    st.markdown("### Cash Flow: Real Balances vs Projection")
-    st.caption(
-        f"Showing the last **{past_weeks_to_show}** completed Monday-Sunday weeks, "
-        f"plus the next **{forecasted_period}** projected weeks."
-    )
-    if cashflow_display.empty:
-        st.warning("No cash flow projection available.")
-    else:
-        render_forecast_band_chart(cashflow_display, title="Cash Flow Summary Projection")
-        with st.expander("Show cash flow table"):
-            render_pretty_table(cashflow_display)
+    with col2:
+        st.markdown("---")
+        #st.markdown("### Cash Flow: Real Balances vs Projection")
+        st.caption(
+            f"Showing the last **{past_weeks_to_show}** completed Monday-Sunday weeks, "
+            f"plus the next **{forecasted_period}** projected weeks."
+        )
+        if cashflow_display.empty:
+            st.warning("No cash flow projection available.")
+        else:
+            render_forecast_band_chart(cashflow_display, title="Cash Flow Summary Projection")
+            with st.expander("Show cash flow table"):
+                render_pretty_table(cashflow_display)
 
     st.markdown("### Upcoming Expenses")
     if upcoming_expenses.empty:
@@ -2087,6 +2132,42 @@ def render_amazon_upload_section():
             st.dataframe(summary["df_sales"], use_container_width=True)
         except Exception as e:
             st.error(f"Error uploading Amazon files: {e}")
+
+def render_liverpool_upload_section():
+    st.markdown("### Liverpool CSV Upload")
+    st.caption(
+        "Upload one or more Liverpool order report .csv files. "
+        "This updates sales and units for marketplace: lvp."
+    )
+
+    uploaded_files = st.file_uploader(
+        "Upload Liverpool CSV files",
+        type=["csv"],
+        accept_multiple_files=True,
+        key="liverpool_csv_uploader"
+    )
+
+    if uploaded_files and st.button("Load Liverpool files into DB", key="load_liverpool_csv_button"):
+        try:
+            summary = upload_liverpool_files_to_db(uploaded_files)
+
+            st.success("Liverpool data uploaded successfully.")
+
+            for table in ["units", "sales"]:
+                st.write(f"{table.title()} rows processed: **{summary[f'{table}_rows']}**")
+                st.write(
+                    f"{table.title()} inserted: **{summary[f'{table}_inserted']}**, "
+                    f"updated: **{summary[f'{table}_updated']}**"
+                )
+
+            st.markdown("#### Units preview")
+            st.dataframe(summary["df_units"], use_container_width=True)
+
+            st.markdown("#### Sales preview")
+            st.dataframe(summary["df_sales"], use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Error uploading Liverpool files: {e}")
 
 
 def render_mode_selector():
